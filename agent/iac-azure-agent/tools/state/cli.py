@@ -13,9 +13,10 @@ Approvals (the hash is computed by the tool; the caller echoes the short hash th
 Steps:
   step-start ID --name TEXT                 step-end ID --result succeeded|failed [--detail TEXT]
 Data:
-  add-requirement ID --text T               add-question ID --text T
+  set-profile ID (--json J | --file F)      review-assumptions ID --confirm SHORT_HASH
+  add-requirement ID --text T [--topic T]   add-question ID --text T [--topic T] [--must-confirm]
   answer ID --question Q --answer T         defer ID --question Q --assumption T
-  add-assumption ID --text T                resolve-assumption ID --assumption A --confirm|--reject
+  add-assumption ID --text T [--topic T]    resolve-assumption ID --assumption A --confirm|--reject
   set-architecture ID (--json J | --file F) set-target ID --tenant G --subscription G --resource-group RG --environment E
   add-file ID --path P --action created|modified|deleted
   add-validation ID --check C --result R [--detail T]
@@ -35,6 +36,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib import paths  # noqa: E402
 from lib.cli_util import load_json_arg, run  # noqa: E402
+from lib.errors import Refused  # noqa: E402
+from setup import permissions  # noqa: E402
 from state import machine  # noqa: E402
 from state.store import StateStore  # noqa: E402
 
@@ -54,11 +57,13 @@ MUTATIONS = {
     "confirm-risk": lambda a, r, e: M.confirm_high_risk(r, a.phrase, e),
     "step-start": lambda a, r, e: M.step_start(r, a.name),
     "step-end": lambda a, r, e: M.step_end(r, a.result, a.detail),
-    "add-requirement": lambda a, r, e: M.add_requirement(r, a.text),
-    "add-question": lambda a, r, e: M.add_question(r, a.text),
+    "set-profile": lambda a, r, e: M.set_profile(r, load_json_arg(a.json, a.file)),
+    "review-assumptions": lambda a, r, e: M.review_assumptions(r, a.confirm),
+    "add-requirement": lambda a, r, e: M.add_requirement(r, a.text, a.topic),
+    "add-question": lambda a, r, e: M.add_question(r, a.text, a.topic, a.must_confirm),
     "answer": lambda a, r, e: M.answer_question(r, a.question, a.answer),
     "defer": lambda a, r, e: M.defer_question(r, a.question, a.assumption),
-    "add-assumption": lambda a, r, e: M.add_assumption(r, a.text),
+    "add-assumption": lambda a, r, e: M.add_assumption(r, a.text, a.topic),
     "resolve-assumption": lambda a, r, e: M.resolve_assumption(r, a.assumption, a.confirm),
     "set-architecture": lambda a, r, e: M.set_architecture(r, load_json_arg(a.json, a.file)),
     "set-target": lambda a, r, e: M.set_target(r, a.tenant, a.subscription, a.resource_group, a.environment),
@@ -69,6 +74,22 @@ MUTATIONS = {
     "set-plan": lambda a, r, e: M.set_plan(r, load_json_arg(a.json, a.file)),
     "set-deployment": lambda a, r, e: M.set_deployment(r, a.status, a.detail),
 }
+
+
+def is_deployment_gate(a):
+    return ((a.cmd == "approve" and a.kind == "deployment") or a.cmd == "confirm-risk"
+            or (a.cmd == "advance" and a.to == "DEPLOYMENT"))
+
+
+def require_permission_rules(project_root):
+    """The human check on a deployment approval is Claude Code's permission prompt. Without
+    the required `ask` rules that check rests on the plugin hook alone (ADR-018)."""
+    result = permissions.check(project_root)
+    if not result["ok"]:
+        detail = result["missing_rules"] + result["conflicts"] + result["problems"]
+        raise Refused("deployment approval is refused until the required permission rules "
+                      "are in the user's Claude Code settings (README, 'Required permission "
+                      "rules'): %s" % "; ".join(detail))
 
 
 def handler(a):
@@ -92,6 +113,8 @@ def handler(a):
         out = view(rec, store.production_envs())
         out["interrupted_step_found"] = holder["interrupted"]
         return out
+    if is_deployment_gate(a):
+        require_permission_rules(store.project_root)
     rec, _ = store.mutate(a.id, lambda r, e: MUTATIONS[a.cmd](a, r, e))
     return view(rec, store.production_envs())
 
@@ -129,7 +152,12 @@ def main(argv=None):
     s.add_argument("--result", required=True, choices=("succeeded", "failed"))
     s.add_argument("--detail")
     for name in ("add-requirement", "add-question", "add-assumption"):
-        cmd(name).add_argument("--text", required=True)
+        s = cmd(name)
+        s.add_argument("--text", required=True)
+        s.add_argument("--topic")
+        if name == "add-question":
+            s.add_argument("--must-confirm", action="store_true")
+    cmd("review-assumptions").add_argument("--confirm", required=True)
     s = cmd("answer")
     s.add_argument("--question", required=True)
     s.add_argument("--answer", required=True)
@@ -141,7 +169,7 @@ def main(argv=None):
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--confirm", dest="confirm", action="store_true")
     g.add_argument("--reject", dest="confirm", action="store_false")
-    for name in ("set-architecture", "set-plan"):
+    for name in ("set-architecture", "set-plan", "set-profile"):
         s = cmd(name)
         s.add_argument("--json")
         s.add_argument("--file")
