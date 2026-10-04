@@ -388,6 +388,56 @@ Docs checked on 2026-10-04:
   already covers this list (ADR-008).
 - **Status:** DEFAULT.
 
+## ADR-025 Publishing: always a branch and a pull request
+
+- **Decision:** `github/cli.py publish` commits the infrastructure root on the request's
+  branch `iac/<id>`, pushes that one branch without force, and opens (or reuses) a pull
+  request into the default branch. There is no path to the default branch, no force, no
+  merge. The owner was asked whether direct pushes to a development branch should be
+  possible and told to proceed; this is the recommended option and can be revisited.
+- **Alternatives:** direct commits to a configured development branch (the brief allows
+  it "when explicitly configured"); committing through the GitHub API without a working
+  copy (rejected: validation runs on local files, and the commit must be those files).
+- **Trade-off:** every change, however small, needs a pull request.
+- **Status:** DEFAULT.
+
+## ADR-026 Publish gate: validation hash and a permission prompt, no separate approval
+
+- **Decision:** publishing needs no hash-bound approval of its own. It needs (a) the
+  preflight checks in `publisher.py`, above all that the validation run's file hash
+  equals the files being committed, and (b) the user's permission prompt on the publish
+  command, through a required `ask` rule and the hook. `/iac-publish` is
+  `disable-model-invocation`, so the model does not start it by itself.
+- **Reasoning:** a pull request is itself a review step and changes nothing in Azure. The
+  deployment approval (ADR-008) already covers the published commit: `git_commit` is part
+  of the approved content, so a later commit invalidates a deployment approval.
+- **Trade-off:** in a permission mode that does not prompt, publishing has no human gate
+  beyond the user having invoked the skill.
+- **Status:** DEFAULT (recommended to the owner, who said to proceed).
+
+## ADR-027 Read back before reporting
+
+- **Decision:** the remote branch head is read with `git ls-remote` after the push and
+  must equal the local commit; otherwise the command fails even if `git push` returned
+  success. The pull request is listed again after creation and its address must be under
+  the configured repository. Branch and commit are recorded after the push is verified,
+  the pull request after it is verified. The command runs as a recorded step: a failure
+  marks it failed (which blocks moving on) and the message lists what was verified.
+  A rerun commits nothing new, pushes nothing new and creates the missing pull request.
+- **Status:** DEFAULT.
+
+## ADR-028 Accepted scanner findings live in the project config
+
+- **Decision:** `accepted_findings.<check id>` holds the reason a finding was accepted.
+  Checkov still runs in full; accepted findings are moved from failed to a listed
+  `accepted` group and the check result is `warning`. Setting one prompts the user (hook
+  and required `ask` rule). In-code suppressions are still reported the same way.
+- **Alternatives:** every finding blocks (the Milestone 3 behaviour, which made dev-grade
+  choices such as locally redundant storage fail every run); passing `--skip-check` to
+  Checkov (rejected: the finding would disappear from the report).
+- **Trade-off:** acceptance is per check ID for the whole project, not per resource.
+- **Status:** DEFAULT (recommended to the owner, who said to proceed).
+
 ## Owner decisions recorded on 2026-10-04
 
 - ADR-011 session-wide shell guard: ACCEPTED as is. Enable the plugin per project.
@@ -400,3 +450,4 @@ Docs checked on 2026-10-04:
 - Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised).
 - How the Milestone 6 workflow file gets written, given ADR-022.
 - A second scanner (PSRule for Azure).
+- Direct commits to a development branch (ADR-025) and per-resource acceptance of findings (ADR-028).

@@ -169,7 +169,8 @@ def check_secrets(ws, files):
                                            "docs/security-model.md for its limits" % len(files))
 
 
-def check_security(ws):
+def check_security(ws, accepted=None):
+    accepted = accepted or {}
     r = run_tool(["checkov", "-d", ws.infra_root, "--framework", "bicep", "-o", "json",
                   "--quiet", "--compact"], ws.dir)
     if r is None:
@@ -191,7 +192,12 @@ def check_security(ws):
         passed += int(summary.get("passed", 0) or 0)
         parse_errors += int(summary.get("parsing_errors", 0) or 0)
         for item in res.get("failed_checks", []) or []:
-            failed.append(_finding(item, ws.infra_root))
+            f = _finding(item, ws.infra_root)
+            if f["code"] in accepted:
+                f["accepted"] = bicep_scan.clean(accepted[f["code"]], 200)
+                suppressed.append(f)
+            else:
+                failed.append(f)
         for item in res.get("skipped_checks", []) or []:
             f = _finding(item, ws.infra_root)
             f["suppressed"] = bicep_scan.clean((item.get("check_result") or {}).get("suppress_comment") or "no reason given", 200)
@@ -202,8 +208,9 @@ def check_security(ws):
         return result("security-scan", "failed", "%d finding(s), %d check(s) passed, %d suppressed"
                       % (len(failed), passed, len(suppressed)), failed + suppressed)
     if suppressed:
-        return result("security-scan", "warning", "%d check(s) passed; %d finding(s) suppressed in "
-                                                  "code. Each suppression needs the user's agreement."
+        return result("security-scan", "warning", "%d check(s) passed; %d finding(s) accepted in "
+                                                  "the project config or suppressed in code. They "
+                                                  "are not passes."
                       % (passed, len(suppressed)), suppressed)
     if not passed:
         return result("security-scan", "skipped", "Checkov found no Bicep resources to check")
@@ -222,7 +229,7 @@ def _finding(item, infra_root):
 NOT_RUN = ["Azure deployment validation and what-if: these need Azure and arrive with Milestone 5."]
 
 
-def run_all(ws):
+def run_all(ws, accepted=None):
     files = ws.infra_files() if os.path.isdir(ws.infra_dir()) else []
     inv = bicep_scan.inventory(ws.dir, files)
     every = inv["bicep_files"]
@@ -233,5 +240,5 @@ def run_all(ws):
         _bicep("bicep-build", "build", inv["entry_points"], ws.dir, ["--stdout"]),
         _bicep("bicep-build-params", "build-params", inv["parameter_files"], ws.dir, ["--stdout"]),
         _bicep("bicep-lint", "lint", every, ws.dir),
-        check_security(ws),
+        check_security(ws, accepted),
     ]

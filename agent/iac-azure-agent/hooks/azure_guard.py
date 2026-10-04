@@ -25,6 +25,12 @@ Bash rules:
      config cli.py clear) are answered with permissionDecision "ask", so Claude Code shows
      the user a permission prompt for them. Setting the repository for the first time
      prompts too: establishing the source of truth needs the user's confirmation.
+  9. Publishing (github cli.py publish) and accepting a scanner finding (config cli.py set
+     accepted_findings.<id>) are answered with "ask" like the approval commands.
+ 10. GitHub CLI, only when the caller is the iac-azure-agent agent: read-only `gh` commands
+     pass; `gh pr create/merge/close`, `gh repo` changes, `gh api` with a write method or
+     fields, and everything else are denied. Publishing goes through github/cli.py, which
+     checks validation first; merging is the user's decision. Other sessions are untouched.
   8. git in the working copy (<project>/.iac-azure-agent/workspace/...), or anywhere when
      the caller is the iac-azure-agent agent: only read-only git subcommands pass. Branches
      are created by tools/workspace/cli.py; commit and push belong to the publish tool
@@ -93,6 +99,14 @@ PS_DENY_CMDLETS = {"get-azaccesstoken"}
 SEP = re.compile(r"\$\(|[;&|\n`()]")
 APPROVAL_CMD = re.compile(r"tools/state/cli\.py\b.*\s(approve|confirm-risk)\b", re.S)
 REPO_SWITCH_CMD = re.compile(r"tools/config/cli\.py\b.*\s(set-repo|clear)\b", re.S)
+PUBLISH_CMD = re.compile(r"tools/github/cli\.py\b.*\spublish\b", re.S)
+ACCEPT_CMD = re.compile(r"tools/config/cli\.py\b.*\sset\s+accepted_findings\.", re.S)
+GH_READ = {("auth", "status"), ("repo", "view"), ("repo", "list"), ("pr", "view"), ("pr", "list"),
+           ("pr", "status"), ("pr", "checks"), ("pr", "diff"), ("issue", "view"), ("issue", "list"),
+           ("run", "view"), ("run", "list"), ("workflow", "view"), ("workflow", "list"),
+           ("release", "view"), ("release", "list"), ("status",), ("version",), ("--version",),
+           ("help",), ("--help",), ("search",), ("browse",)}
+GH_API_WRITE = re.compile(r"(^|\s)(-X|--method)(\s+|=)(?!GET\b|get\b)|(^|\s)(-f|-F|--field|--raw-field|--input)(\s|=)")
 
 
 WORKSPACE_MARK = "/.iac-azure-agent/workspace/"
@@ -155,6 +169,31 @@ def check_git(command, cwd, agent):
             raise Deny("`git %s` is blocked in the iac-azure-agent working copy. Use "
                        "tools/workspace/cli.py (clone, sync, begin). Commit and push belong "
                        "to the publish tool (Milestone 4)" % sub)
+
+
+def check_gh(command, agent):
+    if not agent:
+        return
+    for seg in SEP.split(strip_quotes(command)):
+        w = words(seg)
+        for i, tok in enumerate(w):
+            if os.path.basename(tok).lower() not in ("gh", "gh.exe"):
+                continue
+            rest = [a for a in w[i + 1:]]
+            path = []
+            for a in rest:
+                if a.startswith("-") and a not in ("--version", "--help"):
+                    break
+                path.append(a.lower())
+            if path[:1] == ["api"]:
+                if GH_API_WRITE.search(" " + " ".join(rest[1:]) + " "):
+                    raise Deny("`gh api` with a write method or fields is blocked for this agent")
+                continue
+            if tuple(path[:2]) in GH_READ or tuple(path[:1]) in GH_READ:
+                continue
+            raise Deny("`gh %s` is blocked for this agent. Publishing goes through "
+                       "tools/github/cli.py publish; merging a pull request is the user's "
+                       "decision" % " ".join(path[:2]))
 
 
 def workspace_write_ok(real):
@@ -314,10 +353,17 @@ def check_bash(command, cwd=None, agent=False):
         check_az(args)
     check_bicep(command)
     check_git(command, cwd, agent)
+    check_gh(command, agent)
     norm = command.replace("\\", "/")
     if APPROVAL_CMD.search(norm):
         return "ask", ("iac-azure-agent: this records YOUR approval. Allow it only if you "
                        "approved this exact hash in the conversation.")
+    if PUBLISH_CMD.search(norm):
+        return "ask", ("iac-azure-agent: this commits the validated files, pushes a branch to "
+                       "GitHub and opens a pull request. Allow it only if you asked for that.")
+    if ACCEPT_CMD.search(norm):
+        return "ask", ("iac-azure-agent: this accepts a security scanner finding for this "
+                       "project. Allow it only if you agreed to accept that finding.")
     if REPO_SWITCH_CMD.search(norm):
         return "ask", ("iac-azure-agent: this sets, switches or clears the configured "
                        "repository for this project. Allow it only if you confirmed it.")

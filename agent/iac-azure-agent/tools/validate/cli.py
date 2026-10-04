@@ -32,7 +32,8 @@ def handler(a):
     if a.cmd == "tools":
         return {"tools": checks.tool_versions()}
     root = paths.resolve_project_root(a.project_dir)
-    ws = Workspace(root, ConfigStore(root).load())
+    cfg = ConfigStore(root).load()
+    ws = Workspace(root, cfg)
     ws.require()
     store = StateStore(root)
     if a.id:
@@ -43,7 +44,7 @@ def handler(a):
             raise Refused("the working copy is on %r, not on this request's branch %s"
                           % (ws.branch(), BRANCH_PREFIX + a.id))
     before = ws.tree_hash()
-    results = checks.run_all(ws)
+    results = checks.run_all(ws, (cfg or {}).get("accepted_findings"))
     tree = ws.tree_hash()
     if tree != before:
         raise Refused("files under the infrastructure root changed while validation ran; "

@@ -340,3 +340,53 @@ class WorkingCopyLimits(unittest.TestCase):
         self.assertEqual(self.git("git commit -m 'my own work' && git push")[0], 0)
         self.assertEqual(self.git("git commit -m x", agent=self.AGENT)[0], 2)
         self.assertEqual(self.git("git status", agent=self.AGENT)[0], 0)
+
+
+class PublishingGuards(unittest.TestCase):
+    AGENT = "iac-azure-agent:iac-azure-agent"
+    ROOT = "/home/u/.claude/plugins/cache/claude-agents/iac-azure-agent/0.4.0"
+
+    def call(self, command, agent=None):
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": command}, "cwd": "/tmp"}
+        if agent:
+            payload["agent_type"] = agent
+        return run(payload)
+
+    def test_publish_and_accepting_a_finding_prompt_the_user(self):
+        for cmd in ('python3 "%s/tools/github/cli.py" publish req-20261004-000000-abcdef --message "Add storage"' % self.ROOT,
+                    'python3 %s/tools/github/cli.py --project-dir /p publish req-1 --message x' % self.ROOT,
+                    'python3 "%s/tools/config/cli.py" set accepted_findings.CKV_AZURE_206 "LRS is fine in dev"' % self.ROOT):
+            for agent in (None, self.AGENT):
+                code, out, err = self.call(cmd, agent)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
+
+    def test_preview_verify_and_ordinary_settings_do_not_prompt(self):
+        for cmd in ('python3 "%s/tools/github/cli.py" preview req-1' % self.ROOT,
+                    'python3 "%s/tools/github/cli.py" verify req-1' % self.ROOT,
+                    'python3 "%s/tools/config/cli.py" set region westeurope' % self.ROOT):
+            code, out, err = self.call(cmd, self.AGENT)
+            self.assertEqual((code, out), (0, ""), cmd)
+
+    def test_agent_cannot_use_gh_to_write(self):
+        for cmd in ("gh pr merge 12 --squash", "gh pr create --title x --body y", "gh pr close 3",
+                    "gh repo delete example-org/infra --yes", "gh repo edit --visibility public",
+                    "gh api -X DELETE repos/a/b/git/refs/heads/main",
+                    "gh api repos/a/b/pulls/1/merge --method PUT",
+                    "gh api repos/a/b/issues -f title=x", "gh secret set TOKEN", "gh auth token",
+                    "gh workflow run deploy.yml", "gh release create v1"):
+            code, _, err = self.call(cmd, self.AGENT)
+            self.assertEqual(code, 2, cmd)
+            self.assertIn("blocked", err)
+
+    def test_agent_can_use_gh_to_read(self):
+        for cmd in ("gh auth status", "gh pr view 12 --json state", "gh pr list --head iac/x",
+                    "gh pr checks 12", "gh repo view example-org/infra", "gh api repos/a/b",
+                    "gh api repos/a/b/pulls --method GET", "gh --version"):
+            code, _, err = self.call(cmd, self.AGENT)
+            self.assertEqual(code, 0, (cmd, err))
+
+    def test_other_sessions_keep_gh(self):
+        for cmd in ("gh pr merge 12 --squash", "gh pr create --title x --body y"):
+            self.assertEqual(self.call(cmd)[0], 0, cmd)

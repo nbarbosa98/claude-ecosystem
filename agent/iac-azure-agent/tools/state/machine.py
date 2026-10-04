@@ -479,7 +479,8 @@ NEXT_ACTION = {
     "IMPLEMENTATION": "Write Bicep in the working copy (/iac-implement), then record the "
                       "changed files (workspace/cli.py record-files).",
     "VALIDATION": "Run validate/cli.py run ID; fix failures by moving back to IMPLEMENTATION.",
-    "GIT_REVIEW": "Record branch, commit and PR, target and plan (not implemented before Milestone 4/5).",
+    "GIT_REVIEW": "Publish with github/cli.py publish ID (branch, commit, push, pull request). "
+                  "Target and deployment plan arrive with Milestone 5.",
     "DEPLOYMENT_APPROVAL": "Show target, change set and risk flags; record approval only on the user's explicit yes.",
     "DEPLOYMENT": "Deployment is not implemented before Milestone 5. After an interruption, "
                   "check the real deployment status in Azure before retrying.",
@@ -733,7 +734,7 @@ def add_verification(rec, check, result, detail=None):
     return _add_check(rec, "verification", check, result, detail)
 
 
-def set_git(rec, branch=None, commit=None, pr_url=None):
+def set_git(rec, branch=None, commit=None, pr_url=None, published=None):
     _require_active(rec)
     _require_state(rec, STATES[IDX["GIT_REVIEW"]:], "git details")
     g = dict(rec.get("git") or {})
@@ -747,6 +748,9 @@ def set_git(rec, branch=None, commit=None, pr_url=None):
         if not re.match(r"^https://github\.com/[^/\s]+/[^/\s]+/pull/\d+$", pr_url):
             raise InvalidInput("pr_url must be https://github.com/<owner>/<repo>/pull/<n>")
         g["pr_url"] = pr_url
+    if published is not None:
+        # Written by the publish tool after it read the remote back (github/publisher.py).
+        g["published"] = published
     rec["git"] = g
     _event(rec, "git_set")
     return rec
