@@ -16,10 +16,15 @@ Rules enforced here (docs/decisions.md ADR-007 to ADR-009):
   - Backward moves to any earlier state from DISCOVERY on are allowed with a reason; data
     is kept, results that rework makes stale are marked stale, not deleted.
   - A step that is in progress, failed or interrupted blocks moves until it is resolved.
+  - Discovery (ADR-015 to ADR-017): leaving DISCOVERY needs a request profile, every
+    must-confirm topic for that profile answered by the user (never assumed), and the
+    current list of assumptions reviewed by the user. Leaving ARCHITECTURE needs a proposal
+    with every required section.
 """
 import datetime
 import re
 
+from discovery import catalog, proposal
 from lib import secret_guard
 from lib.canonical import content_hash, short
 from lib.errors import InvalidInput, Refused
@@ -41,6 +46,7 @@ RG_NAME = re.compile(r"^[-\w._()]{1,90}$")
 ENV_NAME = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 SHA = re.compile(r"^[0-9a-f]{7,64}$")
 MAX_TEXT = 4000
+REQUEST_KINDS = ("new", "update", "troubleshoot", "optimize", "remove")
 
 
 def now():
@@ -72,6 +78,7 @@ def new_record(rec_id, project_root, intent):
         "created_at": now(), "updated_at": now(), "revision": 0,
         "state": "REQUEST", "status": "active",
         "intent": _text(intent, "intent"),
+        "profile": None, "assumptions_review": None,
         "requirements": [], "questions": [], "assumptions": [],
         "architecture": None, "target": None, "files": [], "validation": [],
         "git": None, "plan": None,
@@ -89,9 +96,51 @@ def architecture_content(rec):
     """What an architecture approval covers: the proposal and the facts it rests on."""
     return {
         "architecture": rec["architecture"],
+        "profile": rec.get("profile"),
         "requirements": [r["text"] for r in rec["requirements"]],
         "assumptions": [a["text"] for a in rec["assumptions"] if a["status"] == "assumed"],
     }
+
+
+def open_assumptions(rec):
+    return [a["text"] for a in rec["assumptions"] if a["status"] == "assumed"]
+
+
+def assumptions_hash(rec):
+    return content_hash(open_assumptions(rec))
+
+
+def assumptions_reviewed(rec):
+    """True when there is nothing assumed, or the user reviewed exactly the current list."""
+    if not open_assumptions(rec):
+        return True
+    review = rec.get("assumptions_review")
+    return bool(review) and review["hash"] == assumptions_hash(rec)
+
+
+def topic_status(rec):
+    """Maps each catalog topic touched by this request to answered, deferred or open."""
+    out = {}
+    for x in rec["assumptions"]:
+        if x.get("topic") and x["status"] != "rejected":
+            out[x["topic"]] = "deferred"
+    for q in rec["questions"]:
+        if q.get("topic"):
+            out[q["topic"]] = q["status"]
+    for r in rec["requirements"]:
+        if r.get("topic"):
+            out[r["topic"]] = "answered"
+    return out
+
+
+def unconfirmed_topics(rec, production_envs=DEFAULT_PRODUCTION_ENVS):
+    """Must-confirm topics for this profile that the user has not answered."""
+    profile = rec.get("profile")
+    if not profile:
+        return []
+    status = topic_status(rec)
+    return [t for t in catalog.must_confirm(profile, production_envs)
+            if status.get(t) != "answered"]
 
 
 def risk_flags(rec, production_envs=DEFAULT_PRODUCTION_ENVS):
@@ -217,9 +266,22 @@ def _guard(rec, frm, to, accept_incomplete, production_envs):
                           "assumptions, before ARCHITECTURE" % ", ".join(open_q))
         if not rec["requirements"]:
             raise Refused("no confirmed requirements recorded")
+        if not rec.get("profile"):
+            raise Refused("no request profile recorded (set-profile): restate the request and "
+                          "record its kind, resource categories and environments first")
+        missing = unconfirmed_topics(rec, production_envs)
+        if missing:
+            raise Refused("these must be confirmed by the user and cannot be assumed: %s"
+                          % ", ".join(missing))
+        if not assumptions_reviewed(rec):
+            raise Refused("the user has not reviewed the current assumptions; show them and "
+                          "record the review (review-assumptions) before ARCHITECTURE")
     elif frm == "ARCHITECTURE":
         if not rec["architecture"]:
             raise Refused("no architecture proposal recorded")
+        problems = proposal.problems(rec["architecture"])
+        if problems:
+            raise Refused("architecture proposal incomplete: %s" % "; ".join(problems))
     elif frm == "APPROVAL":
         if not _approval_valid(rec, "architecture", production_envs):
             raise Refused("architecture not approved, or approval no longer matches the "
@@ -408,8 +470,10 @@ def step_end(rec, result, detail=None):
 
 NEXT_ACTION = {
     "REQUEST": "Start discovery: advance to DISCOVERY.",
-    "DISCOVERY": "Resolve outstanding questions, record requirements and assumptions.",
-    "ARCHITECTURE": "Record an architecture proposal (set-architecture).",
+    "DISCOVERY": "Record the profile, run discovery/cli.py next for the next questions, "
+                 "resolve them, and have the user review the assumptions.",
+    "ARCHITECTURE": "Record a complete architecture proposal (discovery/cli.py template, "
+                    "then set-architecture).",
     "APPROVAL": "Show the proposal and its hash to the user; record approval only on their explicit yes.",
     "IMPLEMENTATION": "Generate or change Bicep files and record them (not implemented before Milestone 3).",
     "VALIDATION": "Run and record validation checks (not implemented before Milestone 3).",
@@ -445,20 +509,80 @@ AFTER_DISCOVERY = STATES[IDX["DISCOVERY"]:]
 AFTER_ARCH = STATES[IDX["ARCHITECTURE"]:]
 
 
-def add_requirement(rec, text):
+def _topic(topic):
+    if topic is not None and topic not in catalog.TOPICS:
+        raise InvalidInput("unknown topic %r (see discovery/cli.py topics)" % topic)
+    return topic
+
+
+def set_profile(rec, profile):
+    """Round 1 result: what kind of request this is and what it touches."""
+    _require_active(rec)
+    _require_state(rec, AFTER_DISCOVERY, "the request profile")
+    if not isinstance(profile, dict):
+        raise InvalidInput("profile must be a JSON object")
+    extra = set(profile) - {"kind", "categories", "environments", "restatement",
+                            "integrates_existing"}
+    if extra:
+        raise InvalidInput("unknown profile fields: %s" % ", ".join(sorted(extra)))
+    if profile.get("kind") not in REQUEST_KINDS:
+        raise InvalidInput("kind must be one of %s" % ", ".join(REQUEST_KINDS))
+    cats = profile.get("categories")
+    if not isinstance(cats, list) or not cats or any(c not in catalog.CATEGORIES for c in cats):
+        raise InvalidInput("categories must be a non-empty list drawn from %s"
+                           % ", ".join(catalog.CATEGORIES))
+    envs = profile.get("environments")
+    if not isinstance(envs, list) or not envs or any(
+            not isinstance(e, str) or not ENV_NAME.match(e) for e in envs):
+        raise InvalidInput("environments must be a non-empty list of environment names")
+    if not isinstance(profile.get("integrates_existing", False), bool):
+        raise InvalidInput("integrates_existing must be true or false")
+    rec["profile"] = {"kind": profile["kind"], "categories": sorted(set(cats)),
+                      "environments": sorted(set(envs)),
+                      "integrates_existing": profile.get("integrates_existing", False),
+                      "restatement": _text(profile.get("restatement"), "restatement")}
+    _event(rec, "profile_set", kind=profile["kind"])
+    return rec
+
+
+def review_assumptions(rec, confirm):
+    """Records that the user saw the current assumptions and accepts proceeding on them.
+    `confirm` is the short hash of the list, so the review refers to the list as it is now."""
+    _require_active(rec)
+    _require_state(rec, AFTER_DISCOVERY, "an assumptions review")
+    if not open_assumptions(rec):
+        raise Refused("there are no open assumptions to review")
+    h = assumptions_hash(rec)
+    if not isinstance(confirm, str) or confirm.strip().lower() != short(h):
+        raise Refused("confirmation does not match the current assumptions; show the current "
+                      "list to the user and ask again")
+    rec["assumptions_review"] = {"hash": h, "at": now(), "count": len(open_assumptions(rec))}
+    _event(rec, "assumptions_reviewed", hash=short(h))
+    return rec
+
+
+def add_requirement(rec, text, topic=None):
     _require_active(rec)
     _require_state(rec, AFTER_DISCOVERY, "requirements")
     item = {"id": _next_id(rec["requirements"], "R"), "text": _text(text, "requirement"), "at": now()}
+    if _topic(topic):
+        item["topic"] = topic
     rec["requirements"].append(item)
     _event(rec, "requirement_added", item=item["id"])
     return item
 
 
-def add_question(rec, text):
+def add_question(rec, text, topic=None, must_confirm=False):
     _require_active(rec)
     _require_state(rec, AFTER_DISCOVERY, "questions")
     item = {"id": _next_id(rec["questions"], "Q"), "text": _text(text, "question"),
             "status": "open", "at": now()}
+    if _topic(topic):
+        if any(q.get("topic") == topic and q["status"] == "open" for q in rec["questions"]):
+            raise Refused("topic %s already has an open question" % topic)
+        item["topic"] = topic
+    if must_confirm or (topic and catalog.TOPICS[topic].get("must_confirm")):
+        item["must_confirm"] = True
     rec["questions"].append(item)
     _event(rec, "question_added", item=item["id"])
     return item
@@ -478,7 +602,7 @@ def answer_question(rec, qid, answer):
         raise Refused("question %s is already %s" % (qid, q["status"]))
     q["status"] = "answered"
     q["answer"] = _text(answer, "answer")
-    req = add_requirement(rec, "%s -> %s" % (q["text"], q["answer"]))
+    req = add_requirement(rec, "%s -> %s" % (q["text"], q["answer"]), q.get("topic"))
     req["source"] = qid
     return q
 
@@ -488,18 +612,26 @@ def defer_question(rec, qid, assumption):
     q = _find(rec["questions"], qid, "question")
     if q["status"] != "open":
         raise Refused("question %s is already %s" % (qid, q["status"]))
-    a = add_assumption(rec, assumption)
+    if q.get("must_confirm"):
+        raise Refused("question %s must be answered by the user; it cannot be deferred as an "
+                      "assumption (subscription, address ranges, production sizing, public "
+                      "exposure and destructive scope are never guessed)" % qid)
+    a = add_assumption(rec, assumption, q.get("topic"))
     a["source"] = qid
     q["status"] = "deferred"
     q["assumption"] = a["id"]
     return q
 
 
-def add_assumption(rec, text):
+def add_assumption(rec, text, topic=None):
     _require_active(rec)
     _require_state(rec, AFTER_DISCOVERY, "assumptions")
     item = {"id": _next_id(rec["assumptions"], "A"), "text": _text(text, "assumption"),
             "status": "assumed", "at": now()}
+    if _topic(topic):
+        if catalog.TOPICS[topic].get("must_confirm"):
+            raise Refused("topic %s must be confirmed by the user; it cannot be assumed" % topic)
+        item["topic"] = topic
     rec["assumptions"].append(item)
     _event(rec, "assumption_added", item=item["id"])
     return item
@@ -642,7 +774,12 @@ def summary(rec, production_envs=DEFAULT_PRODUCTION_ENVS):
         "next_state": nxt if rec["status"] == "active" else None,
         "next_action": NEXT_ACTION[rec["state"]] if rec["status"] == "active" else None,
         "step": rec.get("step"),
+        "profile": rec.get("profile"),
         "open_questions": [q for q in rec["questions"] if q["status"] == "open"],
+        "unconfirmed_topics": unconfirmed_topics(rec, production_envs),
+        "assumptions_reviewed": assumptions_reviewed(rec),
+        "assumptions_hash": short(assumptions_hash(rec)) if open_assumptions(rec) else None,
+        "proposal_problems": proposal.problems(rec["architecture"]) if rec["architecture"] else None,
         "assumptions": [a for a in rec["assumptions"] if a["status"] == "assumed"],
         "approvals": {k: (dict(v, hash=short(v["hash"])) if v else None)
                       for k, v in rec["approvals"].items()},

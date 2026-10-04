@@ -235,8 +235,102 @@ Docs checked on 2026-10-04:
   replace.
 - **Status:** DEFAULT.
 
+## ADR-015 Adaptive discovery: a topic catalog and a planner, not a questionnaire
+
+- **Decision:** discovery topics are data (`tools/discovery/catalog.py`): round, resource
+  categories, request kinds, a condition (production, non-production, integrates existing,
+  destructive), whether the config answers it, whether it is optional, a conventional
+  default. `planner.py` returns the next batch: at most four topics from the lowest
+  unfinished round, must-confirm first, skipping what the config, the request or an
+  earlier answer settles. Round 1 is the request profile (kind, categories, environments,
+  restatement); nothing is asked before it exists. A "simple" request (new, one category,
+  not production, nothing existing) gets optional topics as suggested default
+  assumptions, not questions. The model words the questions and may add its own.
+- **Alternatives:** leave question selection entirely to the model (not testable, and the
+  owner asked for rules that are "explicit and testable"); a fixed questionnaire (the
+  owner ruled it out: a storage account must not get a landing-zone interview).
+- **Trade-off:** the catalog is a starting set of about forty topics, not complete Azure
+  knowledge. Questions the model adds are recorded but not enforced unless it marks them
+  must-confirm.
+- **Status:** DEFAULT.
+
+## ADR-016 Decisions that are never guessed
+
+- **Decision:** five topics are must-confirm: target subscription, network address space,
+  production sizing, public exposure, and destructive scope. For a profile they apply to,
+  the workflow cannot leave DISCOVERY until each has a requirement recorded as the user's
+  answer. The tools refuse to defer such a question or to record an assumption under such
+  a topic. The model can also mark its own question must-confirm.
+- **Alternatives:** a prompt rule only.
+- **Trade-off:** the tool cannot tell whether the recorded answer came from the user; it
+  only prevents the "assumption" path. Which topics apply depends on the profile the model
+  recorded, so a wrong profile weakens the guard; the profile is part of the approved
+  content (ADR-008), so the user sees it in the proposal.
+- **Status:** DEFAULT. The list follows the owner's brief.
+
+## ADR-017 Assumptions review and proposal completeness
+
+- **Decision:** leaving DISCOVERY with open assumptions needs a review record whose hash
+  equals the hash of the current assumption list (`review-assumptions --confirm`). Leaving
+  ARCHITECTURE needs a proposal with every required section (`discovery/proposal.py`);
+  cost needs an estimate or the limitations that prevent one. `discovery/cli.py proposal`
+  renders the stored proposal with confirmed requirements and assumptions in separate
+  sections and the approval hash. The request profile is added to the content the
+  architecture approval covers.
+- **Alternatives:** free-form proposals; rendering by the model.
+- **Trade-off:** section presence is checked, not quality. Adding the profile changes the
+  approval hash, so an architecture approval made with 0.1.0 is invalid under 0.2.0.
+- **Status:** DEFAULT.
+
+## ADR-018 Required permission rules, checked by the tools
+
+- **Decision (owner, 2026-10-04):** the `ask` rules are required, not optional.
+  `tools/setup/permissions.py` reads the user, project and local settings files and
+  reports missing rules, `allow` rules that match the same commands, and
+  `bypassPermissions` as default mode. `tools/state/cli.py` refuses `approve --kind
+  deployment`, `confirm-risk` and `advance --to DEPLOYMENT` unless the check passes.
+- **Alternatives:** documentation only (the 0.1.0 position); gating architecture approval
+  as well (rejected: it would block all use before the user edits settings, and no Azure
+  change follows from an architecture approval).
+- **Trade-off:** the check compares rule text with sample commands using glob matching.
+  It does not prove that Claude Code prompts. Managed settings are not read.
+- **Correction:** the rules printed in the 0.1.0 README (`Bash(*tools/state/cli.py approve*)`)
+  do not match when the script path is quoted, which is how the agent runs it. The
+  required rules use `cli.py* approve *`. A test covers both forms.
+- **UNVERIFIED:** wildcard matching of `Bash(...)` rules in the middle of a command, and
+  prompting in auto mode, in a live session.
+- **Status:** ACCEPTED.
+
+## ADR-019 Repository inspection through `gh`, metadata only
+
+- **Decision:** `tools/repo/cli.py inspect` makes two GET calls with the user's `gh` login
+  (`repos/<slug>` and the recursive git tree of the default branch). It returns access,
+  default branch, push permission, archived state, Bicep and parameter files, workflows,
+  READMEs, counts of other infrastructure-as-code, candidate infrastructure directories,
+  and a proposed layout when there is no Bicep. It saves nothing. Failures are classified
+  (gh missing, not authenticated, not found or no access, forbidden, rate limited,
+  network) and exit 5 or 1; none returns `verified`.
+- **Alternatives:** cloning (needs a working copy, which is Milestone 3); the GitHub MCP
+  connector (not available to a plugin agent by default); a token in config (forbidden).
+- **Trade-off:** file names only, so conventions inside files are not seen until
+  Milestone 3. GitHub does not distinguish a missing repository from one the login cannot
+  see; the tool says so.
+- **Status:** DEFAULT.
+
+## ADR-020 First repository setting prompts; agent model inherits
+
+- **Decision:** the hook now answers every `config/cli.py set-repo` with `ask`, not only a
+  switch: establishing the source of truth needs the user's confirmation. The agent's
+  `model` is `inherit` and its tools gain `Skill` (replaces ADR-012's `opus`).
+- **Status:** ACCEPTED (owner, 2026-10-04).
+
+## Owner decisions recorded on 2026-10-04
+
+- ADR-011 session-wide shell guard: ACCEPTED as is. Enable the plugin per project.
+- ADR-003 store location and ADR-004 project identity by path: kept.
+- GitHub Enterprise Server: out of scope. Auth methods: as in ADR/config schema.
+- Discovery strictness (open questions answered or deferred before ARCHITECTURE): kept.
+
 ## Open
 
-- ADR-004 project identity by path versus remote URL.
-- ADR-003 store location versus `CLAUDE_PLUGIN_DATA`.
-- ADR-011 session-wide shell guard versus a narrower scope.
+- Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised).

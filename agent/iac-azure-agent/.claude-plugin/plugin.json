@@ -1,7 +1,7 @@
 {
   "name": "iac-azure-agent",
-  "version": "0.1.0",
-  "description": "Plain-English Azure infrastructure in Bicep, with an approval-gated workflow. Milestone 1 (foundation): per-project config, a persistent workflow state machine with hash-bound approvals, a secret guard and a shell guard against direct Azure changes. Discovery, Bicep generation, GitHub and Azure integration are not built yet.",
+  "version": "0.2.0",
+  "description": "Plain-English Azure infrastructure in Bicep, with an approval-gated workflow. Milestone 2 of 6: first-run GitHub repository setup with read-only inspection, adaptive requirements discovery, architecture proposals for approval, per-project config, a persistent workflow state machine with hash-bound approvals, a secret guard and a shell guard against direct Azure changes. Bicep generation, publishing to GitHub and Azure deployment are not built yet.",
   "author": {
     "name": "Nelson Barbosa"
   },

@@ -21,9 +21,10 @@ Bash rules:
   5. Encoded PowerShell (-EncodedCommand and abbreviations) is denied: it hides intent.
   6. Any reference to the agent's config/state store path is denied: records change only
      through tools/config/cli.py and tools/state/cli.py.
-  7. Approval commands (state cli.py approve / confirm-risk, config cli.py set-repo with
-     --confirm-switch-from, config cli.py clear) are answered with permissionDecision
-     "ask", so Claude Code shows the user a permission prompt for them.
+  7. Approval commands (state cli.py approve / confirm-risk, config cli.py set-repo,
+     config cli.py clear) are answered with permissionDecision "ask", so Claude Code shows
+     the user a permission prompt for them. Setting the repository for the first time
+     prompts too: establishing the source of truth needs the user's confirmation.
 Write/Edit/NotebookEdit: a file_path inside the store is denied.
 
 Fail closed: unparseable input, an unexpected payload, or any internal error exits 2.
@@ -79,7 +80,7 @@ PS_DENY_CMDLETS = {"get-azaccesstoken"}
 # Segment separators: ; & | newline, backticks, $( and parentheses.
 SEP = re.compile(r"\$\(|[;&|\n`()]")
 APPROVAL_CMD = re.compile(r"tools/state/cli\.py\b.*\s(approve|confirm-risk)\b", re.S)
-REPO_SWITCH_CMD = re.compile(r"tools/config/cli\.py\b.*\s(set-repo\b.*--confirm-switch-from|clear\b)", re.S)
+REPO_SWITCH_CMD = re.compile(r"tools/config/cli\.py\b.*\s(set-repo|clear)\b", re.S)
 
 
 class Deny(Exception):
@@ -222,8 +223,8 @@ def check_bash(command):
         return "ask", ("iac-azure-agent: this records YOUR approval. Allow it only if you "
                        "approved this exact hash in the conversation.")
     if REPO_SWITCH_CMD.search(norm):
-        return "ask", ("iac-azure-agent: this switches or clears the configured repository "
-                       "for this project. Allow it only if you asked for that.")
+        return "ask", ("iac-azure-agent: this sets, switches or clears the configured "
+                       "repository for this project. Allow it only if you confirmed it.")
     return None
 
 

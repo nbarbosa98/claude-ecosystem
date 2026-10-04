@@ -175,6 +175,7 @@ class AskOnApproval(unittest.TestCase):
         self.assertAsk('python3 %s/tools/state/cli.py confirm-risk req-20261004-000000-abcdef '
                        '--phrase "ACCEPT-RISK 0123456789ab deletion"' % root)
         self.assertAsk('python3 %s/tools/config/cli.py set-repo a/b --confirm-switch-from c/d' % root)
+        self.assertAsk('python3 "%s/tools/config/cli.py" set-repo a/b --default-branch main' % root)
         self.assertAsk('python3 %s/tools/config/cli.py clear --confirm-project /tmp/p' % root)
 
 

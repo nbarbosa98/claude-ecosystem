@@ -2,7 +2,7 @@
 import json
 import os
 
-from helpers import STATE_CLI, SUB, TENANT, StoreCase
+from helpers import ARCH, PROFILE, STATE_CLI, SUB, TENANT, StoreCase
 
 from config.store import ConfigStore
 from lib.canonical import content_hash, short
@@ -11,8 +11,6 @@ from lib.errors import (EXIT_CORRUPT, EXIT_REFUSED, CorruptRecord, InvalidInput,
 from state import machine as M
 from state.store import StateStore
 
-ARCH = {"resources": [{"type": "Microsoft.Storage/storageAccounts", "name": "st-logs"}],
-        "network": "private endpoints"}
 PLAN = {"change_set": [{"resource": "st-logs", "change": "Create"}], "risk_flags": []}
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
@@ -42,7 +40,10 @@ class Base(StoreCase):
         while self.rec()["state"] != target:
             s = self.rec()["state"]
             if s == "DISCOVERY":
+                self.do(M.set_profile, dict(PROFILE, environments=[environment]))
                 self.do(M.add_requirement, "Store application logs for 90 days")
+                for topic in M.unconfirmed_topics(self.rec(), self.store.production_envs()):
+                    self.do(M.add_requirement, "confirmed: %s" % topic, topic)
             elif s == "ARCHITECTURE":
                 self.do(M.set_architecture, ARCH)
             elif s == "APPROVAL":
@@ -123,7 +124,23 @@ class Transitions(Base):
         with self.assertRaises(Refused):  # open question
             self.do_env(M.advance, "ARCHITECTURE", False)
         self.do(M.defer_question, "Q1", "Region is westeurope")
+        with self.assertRaises(Refused):  # no profile
+            self.do_env(M.advance, "ARCHITECTURE", False)
+        self.do(M.set_profile, PROFILE)
+        with self.assertRaises(Refused):  # must-confirm topics unanswered
+            self.do_env(M.advance, "ARCHITECTURE", False)
+        for topic in M.unconfirmed_topics(self.rec()):
+            self.do(M.add_requirement, "confirmed: %s" % topic, topic)
+        with self.assertRaises(Refused):  # assumptions not reviewed
+            self.do_env(M.advance, "ARCHITECTURE", False)
+        self.do(M.review_assumptions, short(M.assumptions_hash(self.rec())))
         self.do_env(M.advance, "ARCHITECTURE", False)
+        self.do(M.set_architecture, {"overview": "only one section"})
+        with self.assertRaises(Refused):  # incomplete proposal
+            self.do_env(M.advance, "APPROVAL", False)
+        self.do(M.back, "DISCOVERY", "start over")
+        self.do_env(M.advance, "ARCHITECTURE", False)
+        self.store.mutate(self.id, lambda r, e: r.update(architecture=None))
         with self.assertRaises(Refused):  # no architecture
             self.do_env(M.advance, "APPROVAL", False)
 
@@ -398,7 +415,13 @@ class StorageAndCli(Base):
         rid = out["record"]["id"]
         self.cli(STATE_CLI, "advance", rid, "--to", "DISCOVERY")
         self.cli(STATE_CLI, "add-requirement", rid, "--text", "RBAC authorization")
-        self.cli(STATE_CLI, "advance", rid, "--to", "ARCHITECTURE")
+        code, out = self.cli(STATE_CLI, "advance", rid, "--to", "ARCHITECTURE")
+        self.assertEqual(code, EXIT_REFUSED)  # no profile yet
+        self.cli(STATE_CLI, "set-profile", rid, "--json", json.dumps(PROFILE))
+        for topic in ("target_subscription", "public_exposure"):
+            self.cli(STATE_CLI, "add-requirement", rid, "--text", "confirmed", "--topic", topic)
+        code, out = self.cli(STATE_CLI, "advance", rid, "--to", "ARCHITECTURE")
+        self.assertEqual(code, 0, out)
         self.cli(STATE_CLI, "set-architecture", rid, "--json", json.dumps(ARCH))
         code, out = self.cli(STATE_CLI, "advance", rid, "--to", "APPROVAL")
         h = out["summary"]["pending_approval"]["hash"]
