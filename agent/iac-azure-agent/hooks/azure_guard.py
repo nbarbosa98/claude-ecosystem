@@ -25,7 +25,19 @@ Bash rules:
      config cli.py clear) are answered with permissionDecision "ask", so Claude Code shows
      the user a permission prompt for them. Setting the repository for the first time
      prompts too: establishing the source of truth needs the user's confirmation.
-Write/Edit/NotebookEdit: a file_path inside the store is denied.
+  8. git in the working copy (<project>/.iac-azure-agent/workspace/...), or anywhere when
+     the caller is the iac-azure-agent agent: only read-only git subcommands pass. Branches
+     are created by tools/workspace/cli.py; commit and push belong to the publish tool
+     (Milestone 4), which checks validation and approval first.
+Write/Edit/NotebookEdit:
+  - a file_path inside the store is denied;
+  - a file_path inside a working copy is allowed only under that project's configured
+    infrastructure root, and never under .git (docs/decisions.md ADR-022);
+  - when the hook input names the iac-azure-agent agent (agent_type), every other
+    file_path is denied too: the agent writes Bicep and its documentation, nothing else.
+    Other sessions keep their normal write access outside the working copy.
+Not covered: files written by a shell command (redirection, tee, cp). The tools catch
+those afterwards: record-files refuses when anything outside the infrastructure root changed.
 
 Fail closed: unparseable input, an unexpected payload, or any internal error exits 2.
 Limits (https://code.claude.com/docs/en/hooks): only exit code 2 blocks. If python3 is
@@ -83,8 +95,91 @@ APPROVAL_CMD = re.compile(r"tools/state/cli\.py\b.*\s(approve|confirm-risk)\b", 
 REPO_SWITCH_CMD = re.compile(r"tools/config/cli\.py\b.*\s(set-repo|clear)\b", re.S)
 
 
+WORKSPACE_MARK = "/.iac-azure-agent/workspace/"
+AGENT_NAME = "iac-azure-agent"
+GIT_READ = {"status", "diff", "log", "show", "ls-files", "ls-tree", "rev-parse", "rev-list",
+            "describe", "blame", "grep", "cat-file", "shortlog", "merge-base", "name-rev",
+            "for-each-ref", "check-ignore", "version", "help", "--version", "--help"}
+GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+
+
 class Deny(Exception):
     pass
+
+
+def is_agent(data):
+    kind = data.get("agent_type")
+    return isinstance(kind, str) and kind.split(":")[-1] == AGENT_NAME
+
+
+def git_invocations(command):
+    """Yields (subcommand, args after it) for each `git` program token in the command."""
+    for seg in SEP.split(strip_quotes(command)):
+        w = words(seg)
+        for i, tok in enumerate(w):
+            if os.path.basename(tok).lower() not in ("git", "git.exe"):
+                continue
+            rest, k = w[i + 1:], 0
+            while k < len(rest) and rest[k].startswith("-") and rest[k] not in ("--version", "--help"):
+                k += 2 if rest[k] in GIT_OPTS_WITH_VALUE else 1
+            if k < len(rest):
+                yield rest[k].lower(), rest[k + 1:]
+
+
+def git_is_read_only(sub, args):
+    if sub in GIT_READ:
+        return True
+    first = args[0] if args else None
+    if sub == "branch":
+        return all(a.startswith("-") for a in args) and not any(
+            a in ("-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy", "-f", "--force")
+            for a in args)
+    if sub == "remote":
+        return first in (None, "-v", "--verbose", "get-url", "show")
+    if sub == "config":
+        return first in ("--get", "--get-all", "--list", "-l")
+    if sub == "stash":
+        return first in ("list", "show")
+    if sub == "tag":
+        return first in (None, "-l", "--list")
+    return False
+
+
+def check_git(command, cwd, agent):
+    norm = command.replace("\\", "/")
+    here = str(cwd or "").replace("\\", "/") + "/"
+    if not (agent or ".iac-azure-agent/workspace" in norm or WORKSPACE_MARK in here):
+        return
+    for sub, args in git_invocations(command):
+        if not git_is_read_only(sub, args):
+            raise Deny("`git %s` is blocked in the iac-azure-agent working copy. Use "
+                       "tools/workspace/cli.py (clone, sync, begin). Commit and push belong "
+                       "to the publish tool (Milestone 4)" % sub)
+
+
+def workspace_write_ok(real):
+    """For a path inside a working copy: None when writable, else the reason it is not."""
+    norm = real.replace("\\", "/")
+    project, _, tail = norm.partition(WORKSPACE_MARK)
+    parts = tail.split("/")
+    if len(parts) < 2 or not parts[0]:
+        return "this is not a file inside a working copy"
+    if ".git" in parts[1:]:
+        return "git metadata is never edited directly"
+    sys.path.insert(0, os.path.join(PLUGIN_ROOT, "tools"))
+    from config.store import ConfigStore
+    try:
+        cfg = ConfigStore(project).load() or {}
+    except Exception:  # noqa: BLE001 - unreadable config: fail closed
+        return "the project config could not be read, so the infrastructure root is unknown"
+    infra = cfg.get("infra_root")
+    repo = cfg.get("repository") or {}
+    if not infra or parts[0] != "%s--%s" % (repo.get("owner"), repo.get("name")):
+        return "this working copy does not belong to the configured repository, or no infrastructure root is configured"
+    inside = "/".join(parts[1:])
+    if inside == infra or not inside.startswith(infra + "/"):
+        return "only files under the infrastructure root %r may be written" % infra
+    return None
 
 
 def words(segment):
@@ -208,7 +303,7 @@ def ask(reason):
     sys.exit(0)
 
 
-def check_bash(command):
+def check_bash(command, cwd=None, agent=False):
     root = store_root()
     if in_store(command, root):
         raise Deny("direct shell access to the iac-azure-agent store is blocked; use "
@@ -218,6 +313,7 @@ def check_bash(command):
     for args in az_invocations(command):
         check_az(args)
     check_bicep(command)
+    check_git(command, cwd, agent)
     norm = command.replace("\\", "/")
     if APPROVAL_CMD.search(norm):
         return "ask", ("iac-azure-agent: this records YOUR approval. Allow it only if you "
@@ -238,7 +334,7 @@ def decide(data):
     if tool == "Bash":
         if not isinstance(tin, dict) or not isinstance(tin.get("command"), str):
             raise Deny("Bash hook input has no command string; failing closed")
-        return check_bash(tin["command"])
+        return check_bash(tin["command"], data.get("cwd"), is_agent(data))
     if tool in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
         if not isinstance(tin, dict):
             raise Deny("%s hook input has no tool_input; failing closed" % tool)
@@ -249,6 +345,14 @@ def decide(data):
         real = os.path.realpath(os.path.expanduser(target))
         if real == root or real.startswith(root + os.sep):
             raise Deny("writing inside the iac-azure-agent store is blocked; use the CLIs")
+        if WORKSPACE_MARK in real.replace("\\", "/"):
+            why = workspace_write_ok(real)
+            if why:
+                raise Deny("writing %s is blocked: %s" % (target, why))
+        elif is_agent(data):
+            raise Deny("iac-azure-agent writes only under the infrastructure root of the "
+                       "working copy (<project>/.iac-azure-agent/workspace/...); %s is outside it"
+                       % target)
     return None
 
 

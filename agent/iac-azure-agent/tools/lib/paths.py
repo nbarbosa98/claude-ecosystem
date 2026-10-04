@@ -19,6 +19,7 @@ import re
 from lib.errors import InvalidInput
 
 APP = "iac-azure-agent"
+WORK_DIR = ".iac-azure-agent"      # inside the project; holds the working copy (ADR-021)
 ENV_HOME = "IAC_AZURE_AGENT_HOME"
 
 
@@ -60,3 +61,13 @@ def project_key(project_root):
 
 def project_dir(project_root, environ=None):
     return os.path.join(store_root(environ), "projects", project_key(project_root))
+
+
+def work_root(project_root):
+    return os.path.join(os.path.realpath(project_root), WORK_DIR)
+
+
+def workspace_dir(project_root, repo):
+    """The working copy of the configured repository, under the project."""
+    return os.path.join(work_root(project_root), "workspace",
+                        "%s--%s" % (repo["owner"], repo["name"]))

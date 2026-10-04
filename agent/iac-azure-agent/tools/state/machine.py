@@ -347,6 +347,7 @@ def back(rec, to, reason, production_envs=DEFAULT_PRODUCTION_ENVS):
     if IDX[to] <= IDX["IMPLEMENTATION"]:
         for c in rec["validation"]:
             c["stale"] = True
+        rec["validation_run"] = None
     if IDX[to] < IDX["DEPLOYMENT"] and rec.get("deployment"):
         rec["deployment"]["stale"] = True
     if IDX[to] < IDX["VERIFICATION"]:
@@ -475,8 +476,9 @@ NEXT_ACTION = {
     "ARCHITECTURE": "Record a complete architecture proposal (discovery/cli.py template, "
                     "then set-architecture).",
     "APPROVAL": "Show the proposal and its hash to the user; record approval only on their explicit yes.",
-    "IMPLEMENTATION": "Generate or change Bicep files and record them (not implemented before Milestone 3).",
-    "VALIDATION": "Run and record validation checks (not implemented before Milestone 3).",
+    "IMPLEMENTATION": "Write Bicep in the working copy (/iac-implement), then record the "
+                      "changed files (workspace/cli.py record-files).",
+    "VALIDATION": "Run validate/cli.py run ID; fix failures by moving back to IMPLEMENTATION.",
     "GIT_REVIEW": "Record branch, commit and PR, target and plan (not implemented before Milestone 4/5).",
     "DEPLOYMENT_APPROVAL": "Show target, change set and risk flags; record approval only on the user's explicit yes.",
     "DEPLOYMENT": "Deployment is not implemented before Milestone 5. After an interruption, "
@@ -712,6 +714,19 @@ def add_validation(rec, check, result, detail=None):
     return _add_check(rec, "validation", check, result, detail)
 
 
+def set_validation_run(rec, tree_hash, tools):
+    """Binds the current validation results to the exact files that were checked."""
+    _require_active(rec)
+    _require_state(rec, ("VALIDATION",), "a validation run")
+    if not isinstance(tree_hash, str) or not re.match(r"^[0-9a-f]{64}$", tree_hash):
+        raise InvalidInput("tree_hash must be a sha256 hex digest")
+    if not isinstance(tools, dict):
+        raise InvalidInput("tools must be an object")
+    rec["validation_run"] = {"tree_hash": tree_hash, "at": now(), "tools": tools}
+    _event(rec, "validation_run", hash=short(tree_hash))
+    return rec
+
+
 def add_verification(rec, check, result, detail=None):
     _require_active(rec)
     _require_state(rec, ("VERIFICATION",), "verification results")
@@ -786,5 +801,6 @@ def summary(rec, production_envs=DEFAULT_PRODUCTION_ENVS):
         "pending_approval": pending_approval(rec, production_envs),
         "risk_flags": risk_flags(rec, production_envs),
         "validation": summarise_checks(rec["validation"]),
+        "validation_run": rec.get("validation_run"),
         "verification": summarise_checks(rec["verification"]),
     }

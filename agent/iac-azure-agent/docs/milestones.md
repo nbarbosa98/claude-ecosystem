@@ -6,8 +6,8 @@ verified, what is open; facts and assumptions kept apart) and stops for owner re
 | # | Milestone | Scope | Status |
 | --- | --- | --- | --- |
 | 1 | Foundation | Plugin manifest and marketplace entry; orchestrator agent definition; per-user, per-project config store and CLI; workflow state machine with hash-bound approvals, high-risk confirmation and resume; secret guard; PreToolUse shell guard; unit tests; ADR log, security model, README | DONE (merged, PR #8) |
-| 2 | Discovery | First-run repository setup with read-only inspection through `gh`; `/iac-setup`, `/iac-repo`, `/iac-discover`; request profile; adaptive question rounds from a topic catalog; must-confirm topics; assumptions review; architecture proposal sections, rendering and approval; required permission rules checked before deployment approval | IN REVIEW |
-| 3 | Bicep engineering | Reading the configured repository's files and conventions; generation standards (modules, naming, tagging, parameters); writing Bicep; `bicep build`, lint and static validation recorded as check results | NOT STARTED |
+| 2 | Discovery | First-run repository setup with read-only inspection through `gh`; `/iac-setup`, `/iac-repo`, `/iac-discover`; request profile; adaptive question rounds from a topic catalog; must-confirm topics; assumptions review; architecture proposal sections, rendering and approval; required permission rules checked before deployment approval | IN REVIEW (PR #9) |
+| 3 | Bicep engineering | Working copy under the project (clone, sync, local work branch); inventory of existing Bicep; `/iac-implement` and the Bicep standards; hook write limits and git guard; changed files recorded from git; validation (structure, Bicep-only, secret scan, `bicep build`, `build-params`, `lint`, Checkov) recorded as check results bound to a file hash | IN REVIEW |
 | 4 | GitHub integration | Branch, commit and push; verification that the remote head matches; pull request creation; recording branch, commit and PR on the request | NOT STARTED |
 | 5 | Azure integration | Identity and context checks; read-only inventory; what-if and change-set extraction with risk flags; deployment approval; deployment through one approval-checking tool; post-deployment verification | NOT STARTED |
 | 6 | Automation and hardening | GitHub Actions validation workflow; security analysis; mocked end-to-end test; recovery procedures; final documentation | NOT STARTED |
@@ -27,3 +27,15 @@ verified, what is open; facts and assumptions kept apart) and stops for owner re
 - A request cannot leave DISCOVERY with an unanswered must-confirm topic or unreviewed
   assumptions, and cannot reach APPROVAL with an incomplete proposal.
 - Not verified in this milestone: the skills and the hook inside a live Claude Code session.
+
+## Milestone 3 exit criteria
+
+- The unit tests pass with no network: GitHub is a local bare repository, `bicep` and
+  `checkov` are fakes; the two real-tool tests pass where the tools are installed.
+- `claude plugin validate .` passes from the repository root.
+- A request cannot leave VALIDATION with a failed check, and cannot leave it with a
+  skipped or unavailable check unless that is accepted explicitly.
+- The agent cannot write outside the infrastructure root of the working copy with Write
+  or Edit, and a change made there any other way is refused when files are recorded.
+- Not verified in this milestone: the skill and the hook inside a live Claude Code
+  session, and the quality of Bicep the model writes (there are no prompt evals yet).

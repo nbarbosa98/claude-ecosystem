@@ -324,6 +324,70 @@ Docs checked on 2026-10-04:
   `model` is `inherit` and its tools gain `Skill` (replaces ADR-012's `opus`).
 - **Status:** ACCEPTED (owner, 2026-10-04).
 
+## ADR-021 Working copy under the project
+
+- **Decision (owner, 2026-10-04):** the configured repository is cloned to
+  `<project>/.iac-azure-agent/workspace/<owner>--<name>/`. `.iac-azure-agent/.gitignore`
+  holds `*`, so the project's own repository ignores it. Each request works on a local
+  branch `iac/<request-id>` created from the fetched default branch. The tool has no
+  operation that discards work; a dirty tree, a diverged default branch or a clone that
+  points elsewhere is refused and left as found. git runs with prompts disabled and uses
+  whatever credential git already has.
+- **Alternatives:** under the agent's store in the user's config home (the hook blocks
+  that path for every tool, by design); using the project directory itself when it is a
+  clone of the configured repository (rejected: write limits and the git guard would then
+  restrict the user's own work in every session, see ADR-022).
+- **Trade-off:** a second copy of the repository when the project already is that
+  repository. Commit and push are not in this tool; they belong to Milestone 4.
+- **Status:** ACCEPTED.
+
+## ADR-022 Write limits: the infrastructure root of the working copy
+
+- **Decision (owner, 2026-10-04):** the hook allows Write and Edit inside a working copy
+  only under the configured infrastructure root. This applies to every session, because
+  the path identifies the working copy. When the hook input carries `agent_type` naming
+  this agent, every other path is denied as well. Fact: `agent_type` is "present when the
+  session uses `--agent` or the hook fires inside a subagent", with plugin-scoped names
+  such as `my-plugin:reviewer` (hooks reference, checked 2026-10-04).
+- **Consequence:** the deployment's documentation lives at `<infra_root>/README.md`. The
+  repository's root README, `docs/` and `.github/workflows/` are outside the limit. The
+  validation workflow of Milestone 6 will need an owner decision on how it is written.
+- **Trade-off:** the hook sees Write and Edit, not files written by shell commands.
+  `record-files` is the backstop: it takes the changed files from git and refuses when
+  any is outside the infrastructure root.
+- **UNVERIFIED:** `agent_type` in a live session with this plugin installed.
+- **Status:** ACCEPTED.
+
+## ADR-023 Validation: established tools, five result values, bound to the files
+
+- **Decision:** `bicep build` on entry points, `bicep build-params` on parameter files,
+  `bicep lint` on every Bicep file, Checkov (`--framework bicep`) for static security
+  analysis. Custom checks only where no tool covers it: structure and documentation
+  presence, Bicep-only, and a secret scan reusing `lib/secret_guard.py`. A tool that is
+  missing, crashes or returns an unreadable report yields `unavailable`. A check with
+  nothing to run on yields `skipped`. Checkov findings fail the check; findings
+  suppressed in code yield `warning` and are listed. A run records every result and the
+  sha256 of the files under the infrastructure root; moving back to IMPLEMENTATION clears it.
+- **Scanner choice (owner asked for a scanner, 2026-10-04):** Checkov, because it installs
+  with `pipx` and needs no PowerShell. Alternative: PSRule for Azure (Microsoft's rules,
+  aligned with the Well-Architected Framework, needs PowerShell). Can be added as a
+  second scanner later.
+- **Trade-off:** without a platform key Checkov reports no severity, so every finding
+  blocks until fixed or suppressed with the user's agreement. Azure-side validation and
+  what-if are not part of this pipeline (Milestone 5) and the output says so.
+- **Verified on 2026-10-04** with Bicep CLI 0.47.16 and Checkov 3.3.22: diagnostic line
+  format, exit codes, Checkov JSON shape, and the rule names in the recommended
+  `bicepconfig.json`.
+- **Status:** DEFAULT (scanner choice), ACCEPTED (having one).
+
+## ADR-024 Files are recorded from git
+
+- **Decision:** `workspace/cli.py record-files` replaces the request's file list with the
+  changes git reports on the request's branch (uncommitted, and committed since the
+  default branch). The model does not supply the list. The deployment approval hash
+  already covers this list (ADR-008).
+- **Status:** DEFAULT.
+
 ## Owner decisions recorded on 2026-10-04
 
 - ADR-011 session-wide shell guard: ACCEPTED as is. Enable the plugin per project.
@@ -334,3 +398,5 @@ Docs checked on 2026-10-04:
 ## Open
 
 - Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised).
+- How the Milestone 6 workflow file gets written, given ADR-022.
+- A second scanner (PSRule for Azure).
