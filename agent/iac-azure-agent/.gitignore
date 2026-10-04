@@ -1,0 +1,13 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local artifacts
+out/
+*.log
+.coverage
+
+# Never commit key material
+*.pfx
+*.pem
+*.key

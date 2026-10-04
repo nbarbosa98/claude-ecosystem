@@ -1,0 +1,17 @@
+{
+  "description": "iac-azure-agent guard: blocks direct Azure changes from the shell, protects the agent's config and state store, and asks the user before approval commands run.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/azure_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

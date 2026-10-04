@@ -16,6 +16,11 @@
       "name": "doc-skill",
       "source": "./skill/doc-skill",
       "description": "Writes a structured document (Title, Summary, Scope, Details or Step by step, Additional considerations, References) about the process just carried out in the conversation or about any topic you name, and saves it as PDF, HTML, MD, TXT or DOCX."
+    },
+    {
+      "name": "iac-azure-agent",
+      "source": "./agent/iac-azure-agent",
+      "description": "Plain-English Azure infrastructure in Bicep with an approval-gated, resumable workflow. In development: Milestone 1 (config, workflow state machine, secret and shell guards); no Bicep generation, GitHub or Azure actions yet."
     }
   ]
 }

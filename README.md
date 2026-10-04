@@ -88,6 +88,7 @@ Each plugin folder contains its own `README.md` covering usage, required tools, 
 | Plugin | What it does | Components | Status |
 | --- | --- | --- | --- |
 | [`email-orchestrator`](agent/email-orchestrator) | Briefs, categorizes, tracks unanswered important emails, flags phishing, cleans up the inbox, and drafts and sends email (each after you confirm) across Gmail, Outlook, and other connected mail services | 1 subagent, 7 skills (`/mail`, `/mail-*`) | `0.3.1` — beta |
+| [`iac-azure-agent`](agent/iac-azure-agent) | Plain-English Azure infrastructure in Bicep: per-project config, approval-gated resumable workflow with hash-bound approvals, secret guard and a shell guard against direct Azure changes. Milestone 1 of 6; no Bicep generation, GitHub or Azure actions yet | 1 subagent, 1 PreToolUse hook, 2 Python CLIs | In development |
 | [`intune-rmd-scr-agent`](agent/intune-rmd-scr-agent) | Orchestrator for building, testing and deploying Intune Remediation scripts on a Windows fleet (lab tenant only) | Project opened as its own root, not an installable plugin (see its [ADR-001](agent/intune-rmd-scr-agent/docs/decisions.md)) | In development |
 
 ### Skills — [`skill/`](skill)
