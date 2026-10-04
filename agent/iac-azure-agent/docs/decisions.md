@@ -324,6 +324,120 @@ Docs checked on 2026-10-04:
   `model` is `inherit` and its tools gain `Skill` (replaces ADR-012's `opus`).
 - **Status:** ACCEPTED (owner, 2026-10-04).
 
+## ADR-021 Working copy under the project
+
+- **Decision (owner, 2026-10-04):** the configured repository is cloned to
+  `<project>/.iac-azure-agent/workspace/<owner>--<name>/`. `.iac-azure-agent/.gitignore`
+  holds `*`, so the project's own repository ignores it. Each request works on a local
+  branch `iac/<request-id>` created from the fetched default branch. The tool has no
+  operation that discards work; a dirty tree, a diverged default branch or a clone that
+  points elsewhere is refused and left as found. git runs with prompts disabled and uses
+  whatever credential git already has.
+- **Alternatives:** under the agent's store in the user's config home (the hook blocks
+  that path for every tool, by design); using the project directory itself when it is a
+  clone of the configured repository (rejected: write limits and the git guard would then
+  restrict the user's own work in every session, see ADR-022).
+- **Trade-off:** a second copy of the repository when the project already is that
+  repository. Commit and push are not in this tool; they belong to Milestone 4.
+- **Status:** ACCEPTED.
+
+## ADR-022 Write limits: the infrastructure root of the working copy
+
+- **Decision (owner, 2026-10-04):** the hook allows Write and Edit inside a working copy
+  only under the configured infrastructure root. This applies to every session, because
+  the path identifies the working copy. When the hook input carries `agent_type` naming
+  this agent, every other path is denied as well. Fact: `agent_type` is "present when the
+  session uses `--agent` or the hook fires inside a subagent", with plugin-scoped names
+  such as `my-plugin:reviewer` (hooks reference, checked 2026-10-04).
+- **Consequence:** the deployment's documentation lives at `<infra_root>/README.md`. The
+  repository's root README, `docs/` and `.github/workflows/` are outside the limit. The
+  validation workflow of Milestone 6 will need an owner decision on how it is written.
+- **Trade-off:** the hook sees Write and Edit, not files written by shell commands.
+  `record-files` is the backstop: it takes the changed files from git and refuses when
+  any is outside the infrastructure root.
+- **UNVERIFIED:** `agent_type` in a live session with this plugin installed.
+- **Status:** ACCEPTED.
+
+## ADR-023 Validation: established tools, five result values, bound to the files
+
+- **Decision:** `bicep build` on entry points, `bicep build-params` on parameter files,
+  `bicep lint` on every Bicep file, Checkov (`--framework bicep`) for static security
+  analysis. Custom checks only where no tool covers it: structure and documentation
+  presence, Bicep-only, and a secret scan reusing `lib/secret_guard.py`. A tool that is
+  missing, crashes or returns an unreadable report yields `unavailable`. A check with
+  nothing to run on yields `skipped`. Checkov findings fail the check; findings
+  suppressed in code yield `warning` and are listed. A run records every result and the
+  sha256 of the files under the infrastructure root; moving back to IMPLEMENTATION clears it.
+- **Scanner choice (owner asked for a scanner, 2026-10-04):** Checkov, because it installs
+  with `pipx` and needs no PowerShell. Alternative: PSRule for Azure (Microsoft's rules,
+  aligned with the Well-Architected Framework, needs PowerShell). Can be added as a
+  second scanner later.
+- **Trade-off:** without a platform key Checkov reports no severity, so every finding
+  blocks until fixed or suppressed with the user's agreement. Azure-side validation and
+  what-if are not part of this pipeline (Milestone 5) and the output says so.
+- **Verified on 2026-10-04** with Bicep CLI 0.47.16 and Checkov 3.3.22: diagnostic line
+  format, exit codes, Checkov JSON shape, and the rule names in the recommended
+  `bicepconfig.json`.
+- **Status:** DEFAULT (scanner choice), ACCEPTED (having one).
+
+## ADR-024 Files are recorded from git
+
+- **Decision:** `workspace/cli.py record-files` replaces the request's file list with the
+  changes git reports on the request's branch (uncommitted, and committed since the
+  default branch). The model does not supply the list. The deployment approval hash
+  already covers this list (ADR-008).
+- **Status:** DEFAULT.
+
+## ADR-025 Publishing: always a branch and a pull request
+
+- **Decision:** `github/cli.py publish` commits the infrastructure root on the request's
+  branch `iac/<id>`, pushes that one branch without force, and opens (or reuses) a pull
+  request into the default branch. There is no path to the default branch, no force, no
+  merge. The owner was asked whether direct pushes to a development branch should be
+  possible and told to proceed; this is the recommended option and can be revisited.
+- **Alternatives:** direct commits to a configured development branch (the brief allows
+  it "when explicitly configured"); committing through the GitHub API without a working
+  copy (rejected: validation runs on local files, and the commit must be those files).
+- **Trade-off:** every change, however small, needs a pull request.
+- **Status:** DEFAULT.
+
+## ADR-026 Publish gate: validation hash and a permission prompt, no separate approval
+
+- **Decision:** publishing needs no hash-bound approval of its own. It needs (a) the
+  preflight checks in `publisher.py`, above all that the validation run's file hash
+  equals the files being committed, and (b) the user's permission prompt on the publish
+  command, through a required `ask` rule and the hook. `/iac-publish` is
+  `disable-model-invocation`, so the model does not start it by itself.
+- **Reasoning:** a pull request is itself a review step and changes nothing in Azure. The
+  deployment approval (ADR-008) already covers the published commit: `git_commit` is part
+  of the approved content, so a later commit invalidates a deployment approval.
+- **Trade-off:** in a permission mode that does not prompt, publishing has no human gate
+  beyond the user having invoked the skill.
+- **Status:** DEFAULT (recommended to the owner, who said to proceed).
+
+## ADR-027 Read back before reporting
+
+- **Decision:** the remote branch head is read with `git ls-remote` after the push and
+  must equal the local commit; otherwise the command fails even if `git push` returned
+  success. The pull request is listed again after creation and its address must be under
+  the configured repository. Branch and commit are recorded after the push is verified,
+  the pull request after it is verified. The command runs as a recorded step: a failure
+  marks it failed (which blocks moving on) and the message lists what was verified.
+  A rerun commits nothing new, pushes nothing new and creates the missing pull request.
+- **Status:** DEFAULT.
+
+## ADR-028 Accepted scanner findings live in the project config
+
+- **Decision:** `accepted_findings.<check id>` holds the reason a finding was accepted.
+  Checkov still runs in full; accepted findings are moved from failed to a listed
+  `accepted` group and the check result is `warning`. Setting one prompts the user (hook
+  and required `ask` rule). In-code suppressions are still reported the same way.
+- **Alternatives:** every finding blocks (the Milestone 3 behaviour, which made dev-grade
+  choices such as locally redundant storage fail every run); passing `--skip-check` to
+  Checkov (rejected: the finding would disappear from the report).
+- **Trade-off:** acceptance is per check ID for the whole project, not per resource.
+- **Status:** DEFAULT (recommended to the owner, who said to proceed).
+
 ## Owner decisions recorded on 2026-10-04
 
 - ADR-011 session-wide shell guard: ACCEPTED as is. Enable the plugin per project.
@@ -334,3 +448,6 @@ Docs checked on 2026-10-04:
 ## Open
 
 - Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised).
+- How the Milestone 6 workflow file gets written, given ADR-022.
+- A second scanner (PSRule for Azure).
+- Direct commits to a development branch (ADR-025) and per-resource acceptance of findings (ADR-028).

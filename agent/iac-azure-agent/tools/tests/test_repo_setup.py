@@ -246,23 +246,20 @@ class PermissionRules(StoreCase):
     def test_missing_by_default(self):
         r = permissions.check(self.project)
         self.assertFalse(r["ok"])
-        self.assertEqual(len(r["missing_rules"]), 4)
+        self.assertEqual(len(r["missing_rules"]), len(permissions.REQUIRED))
 
     def test_required_rules_in_any_scope(self):
         for scope in ("user", "project", "local"):
             with self.subTest(scope=scope):
-                self.setUp()
                 self.write_settings(scope=scope)
                 self.assertTrue(permissions.check(self.project)["ok"])
                 self.tearDown()
-        self.setUp()
+                self.setUp()
 
     def test_rule_must_match_quoted_and_unquoted_commands(self):
         # The form that fails when the script path is quoted.
-        self.write_settings(["Bash(*tools/state/cli.py approve*)",
-                             "Bash(*tools/state/cli.py* confirm-risk *)",
-                             "Bash(*tools/config/cli.py* set-repo *)",
-                             "Bash(*tools/config/cli.py* clear *)"])
+        good = [v["rule"] for k, v in permissions.REQUIRED.items() if k != "approve"]
+        self.write_settings(["Bash(*tools/state/cli.py approve*)"] + good)
         r = permissions.check(self.project)
         self.assertEqual(r["missing_rules"], ["Bash(*tools/state/cli.py* approve *)"])
 
@@ -270,7 +267,7 @@ class PermissionRules(StoreCase):
         self.write_settings(["Bash(*tools/state/cli.py* approve *)"])
         r = permissions.check(self.project)
         self.assertFalse(r["ok"])
-        self.assertEqual(len(r["missing_rules"]), 3)
+        self.assertEqual(len(r["missing_rules"]), len(permissions.REQUIRED) - 1)
 
     def test_allow_rule_that_swallows_an_approval_is_a_conflict(self):
         self.write_settings(extra={"allow": ["Bash(python3 *)"]})

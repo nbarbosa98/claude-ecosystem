@@ -13,6 +13,7 @@
   "tagging": {"<tag>": "<rule or default>"},        # confirmed tagging conventions
   "deployment_auth": "azure-cli-user" | "github-actions-oidc" | "managed-identity",
   "preferences": {"<name>": "<value>"},             # non-secret preferences and defaults
+  "accepted_findings": {"<check id>": "<reason>"},  # scanner findings the user accepted
   "updated_at": "<UTC ISO 8601>"
 }
 
@@ -37,8 +38,8 @@ MAX_VALUE = 500
 
 TOP_KEYS = {"schema_version", "project_root", "repository", "infra_root", "region",
             "environments", "default_environment", "production_environments", "naming",
-            "tagging", "deployment_auth", "preferences", "updated_at"}
-MAP_FIELDS = ("naming", "tagging", "preferences")
+            "tagging", "deployment_auth", "preferences", "accepted_findings", "updated_at"}
+MAP_FIELDS = ("naming", "tagging", "preferences", "accepted_findings")
 LIST_FIELDS = ("environments", "production_environments")
 SCALAR_FIELDS = ("infra_root", "region", "default_environment", "deployment_auth")
 
@@ -101,6 +102,9 @@ def check_map(field, v):
         if not MAP_KEY.match(k):
             raise InvalidInput("invalid key in %s (letters, digits, '_', '.', '-'; starts "
                                "with a letter)" % field)
+        if field == "accepted_findings" and (not isinstance(val, str) or len(val.strip()) < 10):
+            raise InvalidInput("accepted_findings.%s needs the reason it was accepted "
+                               "(at least 10 characters)" % k)
         if not isinstance(val, str) or len(val) > MAX_VALUE:
             raise InvalidInput("%s.%s must be a string of at most %d characters"
                                % (field, k, MAX_VALUE))

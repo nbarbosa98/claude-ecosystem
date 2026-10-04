@@ -23,9 +23,10 @@ from setup import permissions  # noqa: E402
 
 TOOLS = {
     "git": (["git", "--version"], "source control"),
-    "gh": (["gh", "--version"], "GitHub access: repository inspection now; pull requests from Milestone 4"),
+    "gh": (["gh", "--version"], "GitHub access: repository inspection now; pull requests from Milestone 4. Also run `gh auth setup-git` so git can clone"),
     "az": (["az", "version", "--output", "none"], "Azure sign-in, what-if and deployment (Milestone 5)"),
-    "bicep": (["bicep", "--version"], "Bicep build and lint (Milestone 3); `az bicep` is an alternative"),
+    "bicep": (["bicep", "--version"], "Bicep build and lint"),
+    "checkov": (["checkov", "--version"], "static security analysis of the Bicep"),
 }
 SETUP_FIELDS = ("repository", "infra_root", "region", "environments", "default_environment",
                 "production_environments", "naming", "tagging", "deployment_auth")

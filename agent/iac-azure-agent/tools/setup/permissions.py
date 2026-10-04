@@ -33,6 +33,14 @@ REQUIRED = {
         "rule": "Bash(*tools/config/cli.py* set-repo *)",
         "samples": ['python3 "/p/tools/config/cli.py" set-repo org/infra --default-branch main',
                     "python3 /p/tools/config/cli.py --project-dir /x set-repo org/infra --confirm-switch-from a/b"]},
+    "publish": {
+        "rule": "Bash(*tools/github/cli.py* publish *)",
+        "samples": ['python3 "/p/tools/github/cli.py" publish req-1 --message "Add storage"',
+                    "python3 /p/tools/github/cli.py --project-dir /x publish req-1 --message x"]},
+    "accept-finding": {
+        "rule": "Bash(*tools/config/cli.py* set accepted_findings.*)",
+        "samples": ['python3 "/p/tools/config/cli.py" set accepted_findings.CKV_AZURE_206 "LRS is fine in dev"',
+                    "python3 /p/tools/config/cli.py --project-dir /x set accepted_findings.CKV_AZURE_35 reason"]},
     "clear": {
         "rule": "Bash(*tools/config/cli.py* clear *)",
         "samples": ['python3 "/p/tools/config/cli.py" clear --confirm-project /x',
