@@ -1,0 +1,17 @@
+{
+  "name": "iac-azure-agent",
+  "version": "0.1.0",
+  "description": "Plain-English Azure infrastructure in Bicep, with an approval-gated workflow. Milestone 1 (foundation): per-project config, a persistent workflow state machine with hash-bound approvals, a secret guard and a shell guard against direct Azure changes. Discovery, Bicep generation, GitHub and Azure integration are not built yet.",
+  "author": {
+    "name": "Nelson Barbosa"
+  },
+  "repository": "https://github.com/nbarbosa98/claude-plugins",
+  "keywords": [
+    "azure",
+    "bicep",
+    "infrastructure-as-code",
+    "iac",
+    "deployment",
+    "approval"
+  ]
+}
