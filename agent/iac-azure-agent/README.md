@@ -4,10 +4,11 @@ Provision, change, validate and manage Azure infrastructure in plain English. In
 is defined in Bicep, kept in a GitHub repository you configure per project, previewed
 with what-if, and deployed only after an approval bound to the exact target and change set.
 
-**Status: in development, Milestone 4 of 6 (GitHub integration).** It sets up and inspects
+**Status: in development, Milestone 5 of 6 (Azure integration).** It sets up and inspects
 your repository, asks the questions a request needs, produces an architecture proposal
-for your approval, writes the Bicep in a local working copy, validates it, and publishes
-it to a branch and pull request. It cannot touch Azure yet: no what-if, no deployment. See
+for your approval, writes the Bicep in a local working copy, validates it, publishes it to
+a branch and pull request, previews it with Azure what-if, deploys it after you approve
+that exact change set, and verifies the result. The CI workflow is still to come. See
 [docs/milestones.md](docs/milestones.md).
 
 | Component | Type | Job |
@@ -18,6 +19,8 @@ it to a branch and pull request. It cannot touch Azure yet: no what-if, no deplo
 | `/iac-discover` | Skill | Adaptive question rounds and the architecture proposal |
 | `/iac-implement` | Skill | Write the approved design as modular Bicep and validate it |
 | `/iac-publish` | Skill (you invoke it) | Commit, push, confirm the remote, open a pull request |
+| `/iac-deploy` | Skill (you invoke it) | Azure context check, what-if, approval, deployment, verification |
+| `tools/deploy/cli.py` | CLI | `context`, `plan`, `deploy`, `status`, `verify`. Only `deploy` changes Azure |
 | `tools/github/cli.py` | CLI | Publish preview, publish, and re-verification against GitHub |
 | `tools/workspace/cli.py` | CLI | Working copy: clone, sync, work branch, Bicep inventory, record changed files |
 | `tools/validate/cli.py` | CLI | Structure, Bicep build and lint, secret scan, Checkov security scan |
@@ -78,6 +81,26 @@ it to a branch and pull request. It cannot touch Azure yet: no what-if, no deplo
     exactly that, and running publish again continues without committing twice.
   - The pull request body is generated from the request: files, validation results,
     confirmed requirements and assumptions.
+- **Azure planning** (`/iac-deploy`). The tool confirms `az` is signed in to the tenant and
+  subscription you confirmed, then runs Azure's own deployment validation and what-if on
+  the published commit. Both are read-only. The result becomes the change set: every
+  resource to be created, modified or deleted. Risk flags (deletion, stateful replacement,
+  data loss, public exposure, broad RBAC, production target) are derived from it, and
+  anything what-if could not evaluate is listed as uncertain.
+- **Deployment only on approval of that change set.** One command changes Azure, and it
+  refuses unless the approval is valid and, at that moment, `az` is signed in to the
+  approved target, the files are the published ones, the compiled parameters are
+  unchanged, and a fresh what-if gives exactly the approved change set. It runs once, in
+  incremental mode, and is never retried.
+- **Honest outcomes.** A failed deployment is recorded as failed or partial, with the
+  resources Azure created before the failure. Nothing is rolled back or deleted. An
+  interrupted run is resolved by reading the deployment's real state from Azure.
+- **Verification.** Each planned resource is read back from Azure, VM power state is
+  checked, and resources that were not in the plan are reported. Reports keep three lists
+  apart: planned, reported by Azure, independently verified.
+- **Failures explained.** Sign-in, authorization, policy, quota, SKU availability,
+  template and conflict errors are told apart, each with what can be done. Only read
+  operations are retried, and only for temporary errors.
 - **Accepted findings.** A scanner finding you decide to live with is recorded in the
   project config with its reason (`accepted_findings.<check id>`). It is then reported as
   accepted with that reason: a warning, never a pass.
@@ -97,8 +120,8 @@ it to a branch and pull request. It cannot touch Azure yet: no what-if, no deplo
   `az ad sp create-for-rbac`, mutating `az rest`, `New-AzResourceGroupDeployment` and
   similar are blocked; `az account show`, `what-if`, `validate`, `bicep build/lint` pass.
 
-Not yet: Azure sign-in checks, inventory, deployment validation, what-if, deployment and
-verification (Milestone 5); the CI workflow (Milestone 6). The agent says so instead
+Not yet: the GitHub Actions validation workflow for your infrastructure repository
+(Milestone 6). Removing a deployment is not automated: deleting is yours to do. The agent says so instead
 of pretending.
 
 ## Install
@@ -117,7 +140,7 @@ block anything. `/iac-setup` reports which of these are installed:
 | `git` | The working copy | your package manager |
 | `bicep` | Build and lint | https://github.com/Azure/bicep/releases (standalone binary) |
 | `checkov` | Static security analysis | `pipx install checkov` |
-| `az` | Azure, from Milestone 5 | not needed yet |
+| `az`, signed in by you (`az login`) | Azure validation, what-if, deployment, verification | https://learn.microsoft.com/cli/azure/install-azure-cli |
 
 Without `bicep` or `checkov` the matching checks are reported as `unavailable`.
 
@@ -137,15 +160,16 @@ plugin hook. Put this in `~/.claude/settings.json`, or in the project's
       "Bash(*tools/config/cli.py* set-repo *)",
       "Bash(*tools/config/cli.py* clear *)",
       "Bash(*tools/config/cli.py* set accepted_findings.*)",
-      "Bash(*tools/github/cli.py* publish *)"
+      "Bash(*tools/github/cli.py* publish *)",
+      "Bash(*tools/deploy/cli.py* deploy *)"
     ]
   }
 }
 ```
 
 `tools/setup/cli.py status` checks them. **Until they are present the tools refuse to
-publish and to record a deployment approval.** If you added the four rules from 0.2.0 or
-0.3.0, add the last two. An `allow` rule that matches these commands (for example
+publish, to record a deployment approval and to deploy.** If you added rules for an
+earlier version, add the ones you are missing; there are seven. An `allow` rule that matches these commands (for example
 `Bash(python3 *)`) counts as a conflict and is refused too. Do not use `bypassPermissions`
 mode with this plugin.
 
@@ -161,6 +185,7 @@ Disable the plugin (`/plugin`) if you need to run such commands yourself.
 /iac-discover I need a storage account for application logs in dev, private only.
 /iac-implement <request id>
 /iac-publish <request id>
+/iac-deploy <request id>
 /iac-repo show
 Where is my Azure infrastructure request?
 ```
@@ -176,6 +201,8 @@ python3 <plugin>/tools/workspace/cli.py status
 python3 <plugin>/tools/workspace/cli.py inventory
 python3 <plugin>/tools/validate/cli.py run            # checks only, records nothing
 python3 <plugin>/tools/validate/cli.py run <id>       # records results on the request
+python3 <plugin>/tools/deploy/cli.py context
+python3 <plugin>/tools/deploy/cli.py status <id>
 python3 <plugin>/tools/github/cli.py preview <id>
 python3 <plugin>/tools/github/cli.py verify <id>
 python3 <plugin>/tools/config/cli.py show
@@ -188,7 +215,8 @@ python3 <plugin>/tools/state/cli.py show <id>
 
 Output is JSON. Exit codes: 0 ok, 1 invalid input, 2 refused by a rule, 3 storage
 unavailable (nothing saved), 4 corrupt file (left untouched for inspection), 5 an external
-tool or service was missing or failed (nothing was verified).
+tool or service was missing or failed (nothing was verified; for a deployment, read the
+message: it says what Azure did before the failure).
 
 ## Configuration and state location
 
@@ -224,6 +252,12 @@ Details: [docs/security-model.md](docs/security-model.md).
 | Files changed outside the infrastructure directory | Write and Edit limited to it inside the working copy; changed files taken from git and refused if any is outside | Hook and tool code |
 | Other people's work overwritten | No reset, clean or forced checkout; dirty or diverged working copies are refused | Tool code |
 | Code published or deployed unvalidated | Results bound to a hash of the files checked; publish refuses when the hash differs, the verdict is failed, or unaccepted checks are missing | Tool code |
+| Deployment without approval | The deploy tool re-checks the approval itself; a record forced into the DEPLOYMENT state still cannot deploy | Tool code |
+| Deploying something other than what you approved | Approval covers target, change set, risk flags, commit, files and compiled inputs; a fresh what-if must match before the create | Tool code |
+| Deploying to the wrong place | `az` must be signed in to exactly the approved tenant and subscription; the tool never switches | Tool code |
+| High-risk change approved casually | Flags derived from what-if; a separate typed phrase is needed | Tool code |
+| A failed deployment "fixed" destructively | No delete, rollback or retry exists in the tool; failures are classified and handed to you | Tool code and prompt |
+| Success reported without evidence | Status comes from Azure's deployment record; "done" needs verification that reads each resource back | Tool code |
 | Publishing without you | `/iac-publish` is user-invoked; the publish command prompts | Your `ask` rule (required, checked by the tool) and the hook |
 | Default branch changed, history rewritten, pull request merged | The tool pushes one refspec, `iac/<id>`, without force, and has no merge operation; for the agent, `gh` commands that write are blocked | Tool code and hook |
 | A push reported as done when it was not | Remote head read back with `git ls-remote` and compared; pull request fetched after creation | Tool code |
@@ -247,7 +281,9 @@ Details: [docs/security-model.md](docs/security-model.md).
 | Skill | Load `/iac-setup`, `/iac-repo`, `/iac-discover` and `/iac-implement` |
 | Write, Edit | Bicep and its documentation, only under the infrastructure directory of the working copy (enforced by the hook) |
 
-No web or MCP tools. Network use: two read-only GitHub API calls through `gh` for
+No web or MCP tools. Azure use: `az account show`; `az deployment sub|group validate`,
+`what-if`, `create` (only through the deploy tool), `show` and `operation list`;
+`az resource show|list`, `az group show`, `az vm get-instance-view`. Other network use: two read-only GitHub API calls through `gh` for
 inspection; `git clone`, `git fetch`, `git push` (one branch) and `git ls-remote` for the
 working copy; `gh pr list`, `gh pr create` and `gh pr view`; `bicep` restoring public
 registry modules if the code uses them.
@@ -282,6 +318,19 @@ ignores directory permissions.
 - Repository inspection lists file names only. A very large repository is reported as
   truncated. GitHub answers "not found" both for a missing repository and for one your
   login cannot see.
+- The approval gate cannot prove a human approved, as before; for deployment the
+  permission prompt on the deploy command is the human check.
+- What-if is Azure's prediction. It can miss changes (for example resources Azure creates
+  implicitly, such as a VM's disk) and it does not predict failures such as capacity.
+- Risk flags are derived by rules over the what-if result. They catch the listed cases;
+  an unusual exposure or privilege change may not be flagged. Read the change set.
+- Code is deployed from the request's published branch. It does not have to be merged
+  first (see docs/decisions.md ADR-031).
+- There is no rollback and no removal of resources. Cleaning up is a deletion you perform.
+- Subscription-scope and resource-group deployments are supported; management-group and
+  tenant scope are not.
+- Tested against the real services once: one subscription-scope deployment of a small VM
+  (2026-10-05). Everything else is tested against a fake `az`.
 - Publishing always opens a pull request. Direct commits to a development branch are not
   supported.
 - Branch protection, required reviews and CI on your repository are yours to configure;
@@ -316,6 +365,13 @@ ignores directory permissions.
 
 ## Changelog
 
+- `0.5.0` - Milestone 5: `/iac-deploy` and `tools/deploy/cli.py` (context, plan, deploy,
+  status, verify); risk flags from what-if; classified Azure failures; one more required
+  permission rule (deploy). Fixes from the first real run: identifiers removed from pull
+  request text and refused in commit messages; a VM with its network counts as a simple
+  request and topics with a conventional default are offered as assumptions; defaults no
+  longer add a Key Vault or a workspace unasked; accepted findings are listed in the pull
+  request.
 - `0.4.0` - Milestone 4: `/iac-publish` and `tools/github/cli.py` (preview, publish,
   verify) with the remote read back; pull request body generated from the request;
   accepted scanner findings with reasons; two more required permission rules; the agent's

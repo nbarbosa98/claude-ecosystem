@@ -34,6 +34,10 @@ from workspace.manager import Workspace  # noqa: E402
 PR_URL_PREFIX = "https://github.com/"
 
 
+def accepted(project_root):
+    return (ConfigStore(project_root).load() or {}).get("accepted_findings")
+
+
 def publish(a, ws, store, rec):
     perms = permissions.check(store.project_root)
     if not perms["ok"]:
@@ -43,7 +47,7 @@ def publish(a, ws, store, rec):
     message = check_message(a.message)
     title = check_message(a.title or message.splitlines()[0]).splitlines()[0]
     facts = preflight(ws, rec)
-    body = pr_body(rec, facts, a.notes)
+    body = pr_body(rec, facts, a.notes, accepted(store.project_root))
     pub = Publisher(ws)
     branch = facts["branch"]
     out = {"id": rec["id"], "repository": ws.repo["slug"], "branch": branch,
@@ -121,7 +125,7 @@ def handler(a):
                 "files": [{"path": p, "action": x} for p, x in facts["changes"]],
                 "uncommitted": len(facts["uncommitted"]), "validation": facts["validation"],
                 "accepted_incomplete": facts["accepted_incomplete"],
-                "pull_request_body": pr_body(rec, facts),
+                "pull_request_body": pr_body(rec, facts, None, accepted(root)),
                 "will": ["commit the files above on %s" % facts["branch"],
                          "push that branch to %s (never forced)" % ws.repo["slug"],
                          "open a pull request into %s" % ws.default_branch],

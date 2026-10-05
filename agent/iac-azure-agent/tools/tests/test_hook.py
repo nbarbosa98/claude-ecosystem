@@ -362,6 +362,26 @@ class PublishingGuards(unittest.TestCase):
                 self.assertEqual(code, 0, err)
                 self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
 
+    def test_deploy_prompts_and_planning_does_not(self):
+        code, out, err = self.call('python3 "%s/tools/deploy/cli.py" deploy req-20261004-000000-abcdef' % self.ROOT, self.AGENT)
+        self.assertEqual(code, 0, err)
+        d = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(d["permissionDecision"], "ask")
+        self.assertIn("DEPLOYS to Azure", d["permissionDecisionReason"])
+        for cmd in ('python3 "%s/tools/deploy/cli.py" plan req-1 --environment dev --tenant t --subscription s' % self.ROOT,
+                    'python3 "%s/tools/deploy/cli.py" verify req-1' % self.ROOT,
+                    'python3 "%s/tools/deploy/cli.py" status req-1' % self.ROOT,
+                    'python3 "%s/tools/deploy/cli.py" context' % self.ROOT):
+            code, out, err = self.call(cmd, self.AGENT)
+            self.assertEqual((code, out), (0, ""), cmd)
+
+    def test_direct_azure_deployment_stays_blocked(self):
+        for cmd in ("az deployment sub create -l westeurope -f infra/main.bicep",
+                    "az deployment group create -g rg -f main.bicep", "az group delete -n rg --yes",
+                    "az vm delete -g rg -n vm --yes"):
+            self.assertEqual(self.call(cmd, self.AGENT)[0], 2, cmd)
+            self.assertEqual(self.call(cmd)[0], 2, cmd)
+
     def test_preview_verify_and_ordinary_settings_do_not_prompt(self):
         for cmd in ('python3 "%s/tools/github/cli.py" preview req-1' % self.ROOT,
                     'python3 "%s/tools/github/cli.py" verify req-1' % self.ROOT,

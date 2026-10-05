@@ -98,7 +98,9 @@ class Adaptive(Base):
             for a in p["ask"]:
                 asked.add(a["topic"])
                 self.do(M.add_requirement, "answer", a["topic"])
-        self.assertIn("storage_redundancy", asked)
+        self.assertIn("data_classification", asked)
+        # A simple request gets the conventional default as a suggestion, not a question.
+        self.assertIn("storage_redundancy", [x["topic"] for x in self.plan()["suggested_assumptions"]])
         for other in ("address_space", "compute_os", "database_engine", "hosting_platform"):
             self.assertNotIn(other, asked)
 
@@ -182,6 +184,15 @@ class NeverGuess(Base):
     def setUp(self):
         super().setUp()
         self.do(M.set_profile, dict(PROFILE, categories=["networking"]))
+
+    def test_a_vm_with_its_network_is_still_a_simple_request(self):
+        self.do(M.set_profile, dict(PROFILE, categories=["compute", "networking"]))
+        p = planner.plan(self.rec(), None, self.store.production_envs())
+        self.assertEqual(p["depth"], "simple")
+        self.assertLessEqual(len(p["ask"]) + p["remaining_after_batch"], 8)
+        self.assertIn("address_space", M.unconfirmed_topics(self.rec()))   # still never guessed
+        self.do(M.set_profile, dict(PROFILE, categories=["compute", "networking", "database"]))
+        self.assertEqual(planner.plan(self.rec(), None, self.store.production_envs())["depth"], "full")
 
     def test_must_confirm_question_cannot_be_deferred(self):
         self.do(M.add_question, "Which address space?", "address_space")

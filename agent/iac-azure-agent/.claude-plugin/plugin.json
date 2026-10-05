@@ -1,7 +1,7 @@
 {
   "name": "iac-azure-agent",
-  "version": "0.4.0",
-  "description": "Plain-English Azure infrastructure in Bicep, with an approval-gated workflow. Milestone 4 of 6: repository setup, adaptive requirements discovery, architecture proposals for approval, modular Bicep written in a local working copy and validated with the Bicep CLI, a secret scan and Checkov, then published to a branch and pull request with the remote read back. Per-project config, a persistent workflow state machine with hash-bound approvals and guards against direct Azure changes. Azure what-if and deployment are not built yet.",
+  "version": "0.5.0",
+  "description": "Plain-English Azure infrastructure in Bicep, with an approval-gated workflow. Milestone 5 of 6: repository setup, adaptive requirements discovery, architecture proposals for approval, modular Bicep written and validated (Bicep CLI, secret scan, Checkov), published to a branch and pull request, previewed with Azure what-if, deployed only after approval of that exact change set, and verified by reading the resources back. Per-project config, a persistent resumable workflow, and guards against direct Azure changes.",
   "author": {
     "name": "Nelson Barbosa"
   },

@@ -103,7 +103,7 @@ def check_message(message):
     return message
 
 
-def pr_body(rec, facts, extra=None):
+def pr_body(rec, facts, extra=None, accepted_findings=None):
     """Built from the record, so the pull request states what was actually validated."""
     v = facts["validation"]
     lines = ["Request `%s`: %s" % (rec["id"], " ".join(rec["intent"].split())), ""]
@@ -121,6 +121,9 @@ def pr_body(rec, facts, extra=None):
     if facts["accepted_incomplete"]:
         lines += ["", "Accepted by the user as not run: %s. These are not passes."
                   % ", ".join(sorted(set(facts["accepted_incomplete"])))]
+    if accepted_findings:
+        lines += ["", "Security findings accepted for this project (reported as warnings, not passes):", ""]
+        lines += ["- `%s`: %s" % (k, " ".join(str(v).split())) for k, v in sorted(accepted_findings.items())]
     lines += ["", "Not run: Azure deployment validation and what-if. Nothing has been deployed.",
               "", "## Confirmed requirements", ""]
     lines += ["- %s" % " ".join(r["text"].split()) for r in rec["requirements"]] or ["- none"]

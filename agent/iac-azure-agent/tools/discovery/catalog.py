@@ -19,6 +19,7 @@ CATEGORIES = ("networking", "compute", "storage", "database", "app_hosting", "se
               "monitoring", "identity")
 
 MAX_BATCH = 4
+SIMPLE_MAX_CATEGORIES = 2
 
 TOPICS = {
     # ---------------------------------------------------------------- round 2
@@ -204,7 +205,8 @@ TOPICS = {
         "round": 3, "applies": ["security", "app_hosting", "compute", "database"], "optional": True,
         "text": "Is there an existing Key Vault for secrets, keys and certificates, or should one be created?",
         "why": "Secrets are referenced from Key Vault by name and never placed in code.",
-        "default": "A new Key Vault with RBAC authorization and purge protection."},
+        "default": "No Key Vault unless the design has secrets, keys or certificates to store; "
+                   "if it does, a new one with RBAC authorization and purge protection."},
     "compliance": {
         "round": 3, "applies": ["security"],
         "text": "Which compliance controls or standards apply?",
@@ -214,8 +216,9 @@ TOPICS = {
                                 "networking", "security"], "optional": True,
         "text": "Is there a central Log Analytics workspace for diagnostics, or should one be created?",
         "why": "Without diagnostics there is nothing to investigate after an incident.",
-        "default": "Diagnostic settings on every resource that supports them, sent to one Log "
-                   "Analytics workspace per environment with 30 days retention."},
+        "default": "Outside production: platform metrics and boot diagnostics only, no new "
+                   "workspace. In production: diagnostic settings on every resource that "
+                   "supports them, sent to one Log Analytics workspace with 30 days retention."},
     "alerting": {
         "round": 3, "applies": ["monitoring"],
         "text": "Which conditions should raise alerts, and who receives them?",
@@ -256,9 +259,10 @@ def must_confirm(profile, production_envs):
 
 
 def depth(profile, production_envs):
-    """simple: one category, new, not production, nothing existing to integrate. Optional
-    topics are then offered as defaults instead of asked. Everything else is full."""
-    if (profile["kind"] == "new" and len(profile["categories"]) == 1
+    """simple: new, not production, nothing existing to integrate, at most two categories
+    (a VM is compute plus the network it needs). Optional topics are then offered as
+    defaults instead of asked. Everything else is full."""
+    if (profile["kind"] == "new" and len(profile["categories"]) <= SIMPLE_MAX_CATEGORIES
             and not is_production(profile, production_envs)
             and not profile.get("integrates_existing")):
         return "simple"
