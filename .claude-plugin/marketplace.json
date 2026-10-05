@@ -20,7 +20,7 @@
     {
       "name": "iac-azure-agent",
       "source": "./agent/iac-azure-agent",
-      "description": "Plain-English Azure infrastructure in Bicep with an approval-gated workflow. In development (Milestone 4 of 6): repository setup, adaptive requirements discovery, architecture proposals, Bicep generation and validation, publishing to a branch and pull request; no Azure what-if or deployment yet."
+      "description": "Plain-English Azure infrastructure in Bicep with an approval-gated workflow. In development (Milestone 5 of 6): discovery, architecture proposals, Bicep generation and validation, pull requests, Azure what-if, approved deployment and verification. CI workflow and hardening still to come."
     }
   ]
 }

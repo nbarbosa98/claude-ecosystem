@@ -371,3 +371,13 @@ class NoIdentifiersInPublicText(PublishCase):
         code, out = self.publish(rid, message="Deploy to %s" % self.SUB)
         self.assertEqual(code, EXIT_INVALID)
         self.assertNotIn("iac/" + rid, self.remote_branches())
+
+
+class AcceptedFindingsInPullRequest(PublishCase):
+    def test_accepted_findings_and_reasons_are_listed(self):
+        ConfigStore(self.project).set_value("accepted_findings.CKV_AZURE_35",
+                                            "Public endpoint agreed for the dev sandbox only")
+        rid = self.ready()
+        code, out = self.cli(GITHUB_CLI, "preview", rid, env=self.env)
+        self.assertIn("`CKV_AZURE_35`: Public endpoint agreed for the dev sandbox only", out["pull_request_body"])
+        self.assertIn("not passes", out["pull_request_body"])

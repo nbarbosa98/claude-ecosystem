@@ -1,6 +1,6 @@
 # Security model
 
-What protects the user's Azure estate, repository and secrets as of Milestone 4, what each layer
+What protects the user's Azure estate, repository and secrets as of Milestone 5, what each layer
 guarantees, and what it does not. Decisions and sources: [decisions.md](decisions.md).
 
 ## Threats
@@ -20,6 +20,8 @@ guarantees, and what it does not. Decisions and sources: [decisions.md](decision
 10. Insecure or secret-bearing Bicep is written and carried forward.
 11. Unvalidated or unreviewed code reaches the repository's default branch, other
     people's commits are overwritten, or a push is reported that did not happen.
+12. Azure is changed without approval, differently from what was approved, in the wrong
+    subscription, or a failed deployment is hidden or "repaired" destructively.
 
 ## Layers
 
@@ -57,6 +59,15 @@ Plugins cannot ship permission rules (ADR-001). The user adds the `ask` rules (R
 | 18 | `gh` limits for the agent (hook) | Claude Code `PreToolUse`, exit 2 | When `agent_type` names this agent: only read-only `gh` commands pass; `gh pr create/merge/close`, repository changes, secrets, workflow runs, `gh auth token` and `gh api` with a write method or fields are blocked. | Other sessions (by design). `gh` reached through a variable or script. |
 | 19 | Accepted findings | Python code, `ask` rule, hook | A finding is accepted only through the config with a reason of at least ten characters; the command prompts the user; the finding then shows as accepted with its reason, result `warning`. | That the reason is a good one. |
 
+| # | Layer (Milestone 5) | Enforced by | Guarantees | Does not guarantee |
+| --- | --- | --- | --- | --- |
+| 20 | Deploy gate (`tools/deploy/executor.py`) | Python code, inside the process that calls Azure | The create runs only if: the request is in DEPLOYMENT with no unresolved deploy step; the deployment approval (and high-risk confirmation, when flags exist) matches the current target, change set, commit, files and compiled inputs; the required permission rules exist; `az` is signed in to exactly the approved tenant and subscription; the working copy is the published commit, clean; a fresh what-if equals the approved change set and flags. A record whose state was forced to DEPLOYMENT fails these checks. | That the human approved: the model runs the approve command (layer 3 prompts). That Azure does what what-if predicted. |
+| 21 | Deploy mechanics | Python code | One `az deployment ... create`, incremental mode, never retried. No delete, rollback, role assignment, sign-in, context switch or feature registration exists in the tool. | Anything Azure does implicitly as part of a resource (for example a VM's disk). |
+| 22 | Outcome recording | Python code | Status comes from Azure's deployment record and operations: succeeded, failed, or partial with the resources that were created. A failed step blocks moving on. An interrupted step can only be resolved by reading Azure. | The state of resources after the read. |
+| 23 | Verification | Python code | Each planned resource is read back individually; VM power state is checked; unplanned resources in the created resource groups are reported; completion needs these checks to pass. | Behaviour inside the resources (an operating system that booted, an application that works). |
+| 24 | Failure classification (`tools/deploy/azrun.py`) | Python code | Sign-in, authorization, policy, quota, SKU, template, conflict and temporary failures are told apart; only reads are retried, at most twice, only for temporary failures. | A correct label for every Azure error text; unknown ones are `error`. |
+| 25 | Deploy prompt | The user's `ask` rule (required) and the hook | Claude Code asks the user before the deploy command runs. | The `az` call inside the tool is invisible to the hook, which is why layer 20 lives in the tool. |
+
 ## Secret guard
 
 Rejected key names (case and separators ignored): anything containing password, passwd,
@@ -76,11 +87,10 @@ GitHub URLs without credentials, Key Vault names and secret names.
 Not caught: a secret with no recognisable shape, encoded or split secrets, secrets in
 places the tools never write.
 
-## What a reviewer should check in later milestones
+## What a reviewer should check
 
-- Every tool that writes to GitHub or Azure loads the request record and refuses without
-  a valid approval for the exact target and change set it is about to apply.
-- The deploy tool will call Azure from inside its own process, where the hook cannot see
-  it. Its own approval check is therefore the only gate on that path and needs tests that
-  prove it refuses without a valid approval.
-- No command ever passes a secret on the command line.
+- The deploy tool calls Azure from inside its own process, where the hook cannot see it.
+  Its own checks (layer 20) are the only gate on that path. Each one has a test that
+  fails when the check is removed (`tools/tests/test_deploy.py`).
+- No command passes a secret on the command line. Parameter files may read environment
+  variables; the tool hashes the compiled parameters but never prints them.

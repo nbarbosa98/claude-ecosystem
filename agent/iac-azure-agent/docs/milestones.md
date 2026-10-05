@@ -6,10 +6,10 @@ verified, what is open; facts and assumptions kept apart) and stops for owner re
 | # | Milestone | Scope | Status |
 | --- | --- | --- | --- |
 | 1 | Foundation | Plugin manifest and marketplace entry; orchestrator agent definition; per-user, per-project config store and CLI; workflow state machine with hash-bound approvals, high-risk confirmation and resume; secret guard; PreToolUse shell guard; unit tests; ADR log, security model, README | DONE (merged, PR #8) |
-| 2 | Discovery | First-run repository setup with read-only inspection through `gh`; `/iac-setup`, `/iac-repo`, `/iac-discover`; request profile; adaptive question rounds from a topic catalog; must-confirm topics; assumptions review; architecture proposal sections, rendering and approval; required permission rules checked before deployment approval | IN REVIEW (PR #9) |
-| 3 | Bicep engineering | Working copy under the project (clone, sync, local work branch); inventory of existing Bicep; `/iac-implement` and the Bicep standards; hook write limits and git guard; changed files recorded from git; validation (structure, Bicep-only, secret scan, `bicep build`, `build-params`, `lint`, Checkov) recorded as check results bound to a file hash | IN REVIEW (PR #10) |
-| 4 | GitHub integration | Publish preview; commit of the infrastructure directory on `iac/<id>`; push without force; remote head read back; pull request created or reused and fetched; branch, commit and PR recorded; partial failures recorded and resumable; accepted scanner findings; `gh` limited to reads for the agent | IN REVIEW |
-| 5 | Azure integration | Identity and context checks; read-only inventory; what-if and change-set extraction with risk flags; deployment approval; deployment through one approval-checking tool; post-deployment verification | NOT STARTED |
+| 2 | Discovery | First-run repository setup with read-only inspection through `gh`; `/iac-setup`, `/iac-repo`, `/iac-discover`; request profile; adaptive question rounds from a topic catalog; must-confirm topics; assumptions review; architecture proposal sections, rendering and approval; required permission rules checked before deployment approval | DONE (merged, PR #9) |
+| 3 | Bicep engineering | Working copy under the project (clone, sync, local work branch); inventory of existing Bicep; `/iac-implement` and the Bicep standards; hook write limits and git guard; changed files recorded from git; validation (structure, Bicep-only, secret scan, `bicep build`, `build-params`, `lint`, Checkov) recorded as check results bound to a file hash | DONE (merged, PR #10) |
+| 4 | GitHub integration | Publish preview; commit of the infrastructure directory on `iac/<id>`; push without force; remote head read back; pull request created or reused and fetched; branch, commit and PR recorded; partial failures recorded and resumable; accepted scanner findings; `gh` limited to reads for the agent | DONE (merged, PR #11) |
+| 5 | Azure integration | Context check against the confirmed tenant and subscription; Azure validation and what-if; change set, risk flags and uncertain changes; deployment through one tool that re-checks approval, inputs and a fresh what-if; classified failures; failed and partial outcomes; interrupted runs resolved from Azure; verification by reading resources back | IN REVIEW |
 | 6 | Automation and hardening | GitHub Actions validation workflow; security analysis; mocked end-to-end test; recovery procedures; final documentation | NOT STARTED |
 
 ## Milestone 1 exit criteria
@@ -50,3 +50,16 @@ verified, what is open; facts and assumptions kept apart) and stops for owner re
 - A push or pull request is reported as done only after it was read back.
 - Not verified in this milestone: a publish against GitHub itself, and `/iac-publish`
   inside a live Claude Code session.
+
+## Milestone 5 exit criteria
+
+- The unit tests pass with no Azure access (a fake `az`), including one test that drives
+  the whole workflow from request to completion through the CLIs.
+- No deployment happens without a valid approval, with a forged record state, after the
+  what-if result changed, after the files or inputs changed, or against another subscription.
+- A failed create is recorded as failed or partial and is never retried; nothing is deleted.
+- Verified against the real services once (2026-10-05): a request for a small Linux VM
+  went from discovery to a published pull request, Azure what-if, an approved
+  subscription-scope deployment and verification.
+- Not verified: the skill, prompts and hook inside a live Claude Code session; high-risk
+  and failure paths against real Azure; resource-group scope against real Azure.

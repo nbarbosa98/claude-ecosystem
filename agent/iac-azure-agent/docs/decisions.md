@@ -438,6 +438,79 @@ Docs checked on 2026-10-04:
 - **Trade-off:** acceptance is per check ID for the whole project, not per resource.
 - **Status:** DEFAULT (recommended to the owner, who said to proceed).
 
+## ADR-029 Azure: the user's `az` session, never managed by the agent
+
+- **Decision:** the tools use the session `az login` left. They read the context
+  (`az account show`) and refuse unless it is exactly the tenant and subscription the
+  user confirmed, which are passed to `plan` and stored as the target. They never sign in,
+  switch subscription, read a token, create a credential, grant a role or register a
+  feature. For GitHub Actions deployments the documented preference is workload identity
+  federation; none is created by the agent.
+- **Alternatives:** a service principal with a client secret (ruled out by the brief);
+  passing `--subscription` to every `az` call (rejected: the user should see and control
+  which context is active).
+- **Status:** DEFAULT.
+
+## ADR-030 One deploy path, gated in the tool, bound to a fresh what-if
+
+- **Decision:** `deploy/cli.py plan` runs Azure validation and what-if on the published
+  commit and records target, change set, risk flags, uncertain changes and a hash of the
+  compiled template and parameters. That content is what the deployment approval covers
+  (ADR-008). `deploy/cli.py deploy` is the only code that changes Azure. Immediately
+  before the create it re-checks the approval, the permission rules, the `az` context,
+  the working copy, the inputs hash, and runs what-if again; any difference from the
+  approved change set refuses the deployment. The create is incremental, runs once and is
+  never retried. Risk flags come from rules over the what-if result (`deploy/whatif.py`).
+- **Why in the tool:** the `az` call happens inside the tool's process, where the hook
+  cannot see it (security-model.md, layer 20).
+- **Alternatives:** deployment stacks (not used: newer, and deny settings and deletion
+  behaviour would need their own approval design); Complete mode (rejected: it deletes
+  resources not in the template).
+- **Trade-off:** a second what-if makes each deployment slower. What-if is a prediction
+  and can be noisy; noise between the two runs would block a deployment until re-planned.
+- **Status:** DEFAULT.
+
+## ADR-031 Deployment does not require the pull request to be merged
+
+- **Decision:** the code must be published (pushed, read back) and validated, and the
+  deployment approval covers its commit. It does not have to be merged into the default
+  branch first.
+- **Reasoning:** for development environments, deploying a branch to try it is normal.
+  The owner was asked on 2026-10-05 whether to enforce "merged first" and has not decided.
+- **Alternatives:** require the pull request to be merged for every environment; require
+  it for production environments only (probably the right rule; needs the owner).
+- **Status:** OPEN.
+
+## ADR-032 Outcomes, recovery and verification
+
+- **Decision:** a failed create is recorded as `failed`, or `partial` when Azure's
+  operations show resources that were created, with those resources listed. Nothing is
+  rolled back or deleted. A deploy step found in progress on resume can only be resolved
+  by `status --record`, which reads the deployment from Azure. `verify` reads each planned
+  resource back, checks VM power state, and reports resources in the created resource
+  groups that were not in the plan (disks Azure creates with a VM are expected). Reports
+  keep planned, reported-by-Azure and independently-verified apart. Azure failures are
+  classified with advice; only reads are retried, twice at most, for temporary failures.
+- **Trade-off:** no automated cleanup. Removing a deployment is the user's action.
+- **Status:** DEFAULT.
+
+## ADR-033 Changes made after the first real run (2026-10-05)
+
+- **Context:** the workflow was run for real once: a small Linux VM, published to a
+  public repository and deployed to Azure. Publishing and deployment had only been tested
+  against fakes before; both worked. Four problems were found and fixed.
+- **Identifiers in public text:** a requirement held the subscription and tenant IDs and
+  would have been copied into a public pull request. GUIDs are now removed from pull
+  request text and refused in commit messages.
+- **Too many questions:** adding networking to a VM request made it "full" and queued
+  fifteen topics. A request is now simple with up to two categories, and for a simple
+  request every topic with a conventional default (not only optional ones) is offered as
+  an assumption. Must-confirm topics are unaffected.
+- **Defaults that add resources:** the Key Vault and diagnostics defaults no longer
+  propose new resources for a request that does not need them.
+- **Accepted findings** are listed, with reasons, in the pull request text.
+- **Status:** ACCEPTED (fixes), with ADR-015 updated by this entry.
+
 ## Owner decisions recorded on 2026-10-04
 
 - ADR-011 session-wide shell guard: ACCEPTED as is. Enable the plugin per project.
@@ -450,4 +523,5 @@ Docs checked on 2026-10-04:
 - Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised).
 - How the Milestone 6 workflow file gets written, given ADR-022.
 - A second scanner (PSRule for Azure).
+- Whether deployment requires a merged pull request, at least for production (ADR-031).
 - Direct commits to a development branch (ADR-025) and per-resource acceptance of findings (ADR-028).

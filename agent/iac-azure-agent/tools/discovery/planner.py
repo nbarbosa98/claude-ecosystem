@@ -6,8 +6,10 @@ Adaptive rules (docs/decisions.md ADR-015):
     has an answer, a deferral or an open question for it.
   - Rounds are worked in order; a batch holds at most catalog.MAX_BATCH topics from one round.
   - Must-confirm topics come first within a round.
-  - For a simple request, optional topics are not asked: their conventional defaults are
-    returned as suggested assumptions, which the user reviews before ARCHITECTURE.
+  - For a simple request, a topic that has a conventional default is not asked, whether
+    it is optional or not: the default is returned as a suggested assumption, which the
+    user reviews before ARCHITECTURE. Topics without a default, and must-confirm topics,
+    are always asked.
 """
 from discovery import catalog
 from state import machine
@@ -46,7 +48,7 @@ def plan(rec, config, production_envs):
         if field and not t.get("must_confirm"):
             skipped.append({"topic": tid, "reason": "answered by project config (%s)" % field})
             continue
-        if t.get("optional") and how_deep == "simple" and t.get("default"):
+        if how_deep == "simple" and t.get("default") and not t.get("must_confirm"):
             suggested.append({"topic": tid, "assumption": t["default"], "why": t["why"]})
             continue
         item = {"topic": tid, "round": t["round"], "text": t["text"], "why": t["why"],
