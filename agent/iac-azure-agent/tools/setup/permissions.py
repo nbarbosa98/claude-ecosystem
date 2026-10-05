@@ -41,6 +41,10 @@ REQUIRED = {
         "rule": "Bash(*tools/config/cli.py* set accepted_findings.*)",
         "samples": ['python3 "/p/tools/config/cli.py" set accepted_findings.CKV_AZURE_206 "LRS is fine in dev"',
                     "python3 /p/tools/config/cli.py --project-dir /x set accepted_findings.CKV_AZURE_35 reason"]},
+    "deploy": {
+        "rule": "Bash(*tools/deploy/cli.py* deploy *)",
+        "samples": ['python3 "/p/tools/deploy/cli.py" deploy req-1',
+                    "python3 /p/tools/deploy/cli.py --project-dir /x deploy req-1 "]},
     "clear": {
         "rule": "Bash(*tools/config/cli.py* clear *)",
         "samples": ['python3 "/p/tools/config/cli.py" clear --confirm-project /x',

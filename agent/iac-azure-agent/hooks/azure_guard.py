@@ -25,6 +25,9 @@ Bash rules:
      config cli.py clear) are answered with permissionDecision "ask", so Claude Code shows
      the user a permission prompt for them. Setting the repository for the first time
      prompts too: establishing the source of truth needs the user's confirmation.
+     The deploy command (deploy cli.py deploy) prompts the same way. The az call it makes
+     runs inside that tool and is not seen by this hook; the tool's own approval checks are
+     the gate on that path.
   9. Publishing (github cli.py publish) and accepting a scanner finding (config cli.py set
      accepted_findings.<id>) are answered with "ask" like the approval commands.
  10. GitHub CLI, only when the caller is the iac-azure-agent agent: read-only `gh` commands
@@ -99,6 +102,7 @@ PS_DENY_CMDLETS = {"get-azaccesstoken"}
 SEP = re.compile(r"\$\(|[;&|\n`()]")
 APPROVAL_CMD = re.compile(r"tools/state/cli\.py\b.*\s(approve|confirm-risk)\b", re.S)
 REPO_SWITCH_CMD = re.compile(r"tools/config/cli\.py\b.*\s(set-repo|clear)\b", re.S)
+DEPLOY_CMD = re.compile(r"tools/deploy/cli\.py\b.*\sdeploy\b", re.S)
 PUBLISH_CMD = re.compile(r"tools/github/cli\.py\b.*\spublish\b", re.S)
 ACCEPT_CMD = re.compile(r"tools/config/cli\.py\b.*\sset\s+accepted_findings\.", re.S)
 GH_READ = {("auth", "status"), ("repo", "view"), ("repo", "list"), ("pr", "view"), ("pr", "list"),
@@ -358,6 +362,9 @@ def check_bash(command, cwd=None, agent=False):
     if APPROVAL_CMD.search(norm):
         return "ask", ("iac-azure-agent: this records YOUR approval. Allow it only if you "
                        "approved this exact hash in the conversation.")
+    if DEPLOY_CMD.search(norm):
+        return "ask", ("iac-azure-agent: this DEPLOYS to Azure. Allow it only if you approved "
+                       "this exact what-if change set in the conversation.")
     if PUBLISH_CMD.search(norm):
         return "ask", ("iac-azure-agent: this commits the validated files, pushes a branch to "
                        "GitHub and opens a pull request. Allow it only if you asked for that.")

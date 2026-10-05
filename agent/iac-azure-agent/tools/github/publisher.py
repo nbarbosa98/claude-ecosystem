@@ -17,6 +17,7 @@ Each stage that completed is recorded even when a later one fails, so a rerun co
 where it stopped.
 """
 import json
+import re
 import subprocess
 
 from lib import secret_guard
@@ -26,6 +27,13 @@ from workspace.manager import BRANCH_PREFIX
 
 TIMEOUT = 120
 MAX_SUBJECT = 100
+# Tenant, subscription and object IDs are not secrets, but they do not belong in commit
+# messages or pull request text, which may be public. Requirements can mention them.
+GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def redact(text):
+    return GUID.sub("<id removed>", text)
 
 
 def gh(args, cwd=None, stdin=None):
@@ -89,6 +97,9 @@ def check_message(message):
     if len(subject) > MAX_SUBJECT:
         raise InvalidInput("the first line of the commit message is longer than %d characters" % MAX_SUBJECT)
     secret_guard.check(message, "commit message")
+    if GUID.search(message):
+        raise InvalidInput("the commit message contains a GUID (tenant, subscription or object "
+                           "ID); leave identifiers out of commit messages")
     return message
 
 
@@ -116,7 +127,7 @@ def pr_body(rec, facts, extra=None):
     assumed = [a for a in rec["assumptions"] if a["status"] == "assumed"]
     lines += ["", "## Assumptions (not confirmed)", ""]
     lines += ["- %s" % " ".join(a["text"].split()) for a in assumed] or ["- none"]
-    body = "\n".join(lines) + "\n"
+    body = redact("\n".join(lines) + "\n")
     secret_guard.check(body, "pull request body")
     return body
 
