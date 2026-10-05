@@ -156,6 +156,7 @@ def deployment_content(rec, production_envs=DEFAULT_PRODUCTION_ENVS):
     plan = rec.get("plan") or {}
     return {
         "target": rec["target"],
+        "deployment": plan.get("deployment"),
         "change_set": plan.get("change_set"),
         "risk_flags": risk_flags(rec, production_envs),
         "git_commit": (rec.get("git") or {}).get("commit"),
@@ -479,12 +480,12 @@ NEXT_ACTION = {
     "IMPLEMENTATION": "Write Bicep in the working copy (/iac-implement), then record the "
                       "changed files (workspace/cli.py record-files).",
     "VALIDATION": "Run validate/cli.py run ID; fix failures by moving back to IMPLEMENTATION.",
-    "GIT_REVIEW": "Publish with github/cli.py publish ID (branch, commit, push, pull request). "
-                  "Target and deployment plan arrive with Milestone 5.",
+    "GIT_REVIEW": "Publish with github/cli.py publish ID, then plan the deployment with "
+                  "deploy/cli.py plan ID (Azure validation and what-if).",
     "DEPLOYMENT_APPROVAL": "Show target, change set and risk flags; record approval only on the user's explicit yes.",
-    "DEPLOYMENT": "Deployment is not implemented before Milestone 5. After an interruption, "
-                  "check the real deployment status in Azure before retrying.",
-    "VERIFICATION": "Record verification checks, then complete.",
+    "DEPLOYMENT": "Run deploy/cli.py deploy ID. After an interruption run deploy/cli.py status ID "
+                  "to read the real deployment state from Azure before anything else.",
+    "VERIFICATION": "Run deploy/cli.py verify ID, then complete.",
 }
 
 
@@ -761,20 +762,25 @@ def set_plan(rec, plan):
     _require_state(rec, STATES[IDX["GIT_REVIEW"]:], "the deployment plan")
     if not isinstance(plan, dict) or not isinstance(plan.get("change_set"), list):
         raise InvalidInput("plan must be an object with a change_set list")
-    extra = set(plan) - {"change_set", "risk_flags", "summary"}
+    extra = set(plan) - {"change_set", "risk_flags", "summary", "deployment", "uncertain"}
     if extra:
         raise InvalidInput("unknown plan fields: %s" % ", ".join(sorted(extra)))
     flags = plan.get("risk_flags", [])
     if not isinstance(flags, list) or any(f not in RISK_FLAGS for f in flags):
         raise InvalidInput("risk_flags must be a list drawn from %s" % ", ".join(RISK_FLAGS))
     secret_guard.check(plan, "plan")
+    dep = plan.get("deployment")
+    if dep is not None and (not isinstance(dep, dict) or set(dep) - {
+            "scope", "location", "name", "inputs_hash", "resource_group", "template", "parameters"}):
+        raise InvalidInput("plan.deployment has unknown fields")
     rec["plan"] = {"change_set": plan["change_set"], "risk_flags": sorted(set(flags)),
-                   "summary": plan.get("summary")}
+                   "summary": plan.get("summary"), "deployment": dep,
+                   "uncertain": plan.get("uncertain") or [], "at": now()}
     _event(rec, "plan_set")
     return rec
 
 
-def set_deployment(rec, status, detail=None):
+def set_deployment(rec, status, detail=None, info=None):
     _require_active(rec)
     _require_state(rec, ("DEPLOYMENT",), "the deployment result")
     if status not in DEPLOYMENT_STATUSES:
@@ -782,6 +788,11 @@ def set_deployment(rec, status, detail=None):
     rec["deployment"] = {"status": status, "at": now()}
     if detail:
         rec["deployment"]["detail"] = _text(detail, "detail")
+    if info is not None:
+        if not isinstance(info, dict):
+            raise InvalidInput("info must be an object")
+        secret_guard.check(info, "deployment info")
+        rec["deployment"]["info"] = info
     _event(rec, "deployment_recorded", result=status)
     return rec
 

@@ -341,3 +341,33 @@ class ReadBack(PublishCase):
             Publisher(self.LyingWorkspace(None), run_gh=fake_gh).open_pr("iac/x", "t", "b")
         self.assertIn("do not treat it as created", str(cm.exception))
         self.assertEqual(calls, [["pr", "list"], ["pr", "create"], ["pr", "list"]])
+
+
+class NoIdentifiersInPublicText(PublishCase):
+    SUB = "00000000-0000-0000-0000-00000000000b"
+
+    def test_pull_request_body_has_no_guids(self):
+        rid = self.request_in("IMPLEMENTATION")
+        store = StateStore(self.project)
+        store.mutate(rid, lambda r, e: M.add_requirement(r, "Target is subscription lab (%s)" % self.SUB))
+        # A new requirement invalidates the architecture approval; approve again.
+        store.mutate(rid, lambda r, e: M.approve(r, "architecture", M.pending_approval(r)["hash"]))
+        store.mutate(rid, lambda r, e: M.advance(r, "IMPLEMENTATION"))
+        self.write("infra/modules/storage.bicep", STORAGE + "// change\n")
+        self.cli(WORKSPACE_CLI, "record-files", rid, env=self.env)
+        self.cli(STATE_CLI, "advance", rid, "--to", "VALIDATION")
+        self.cli(VALIDATE_CLI, "run", rid, env=self.env)
+        self.cli(STATE_CLI, "advance", rid, "--to", "GIT_REVIEW")
+        code, out = self.cli(GITHUB_CLI, "preview", rid, env=self.env)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn(self.SUB, out["pull_request_body"])
+        self.assertIn("Target is subscription lab (<id removed>)", out["pull_request_body"])
+        code, out = self.publish(rid)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn(self.SUB, self.gh_calls()["prs"][0]["body"])
+
+    def test_commit_message_with_a_guid_is_refused(self):
+        rid = self.ready()
+        code, out = self.publish(rid, message="Deploy to %s" % self.SUB)
+        self.assertEqual(code, EXIT_INVALID)
+        self.assertNotIn("iac/" + rid, self.remote_branches())
