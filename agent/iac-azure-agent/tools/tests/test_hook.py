@@ -356,11 +356,17 @@ class PublishingGuards(unittest.TestCase):
     def test_publish_and_accepting_a_finding_prompt_the_user(self):
         for cmd in ('python3 "%s/tools/github/cli.py" publish req-20261004-000000-abcdef --message "Add storage"' % self.ROOT,
                     'python3 %s/tools/github/cli.py --project-dir /p publish req-1 --message x' % self.ROOT,
-                    'python3 "%s/tools/config/cli.py" set accepted_findings.CKV_AZURE_206 "LRS is fine in dev"' % self.ROOT):
+                    'python3 "%s/tools/github/cli.py" install-workflow' % self.ROOT,
+                    'python3 %s/tools/github/cli.py --project-dir /p install-workflow' % self.ROOT,
+                    'python3 "%s/tools/config/cli.py" set accepted_findings.CKV_AZURE_206@infra/main.bicep:Microsoft.Storage/storageAccounts.sa "LRS is fine in dev"' % self.ROOT):
             for agent in (None, self.AGENT):
                 code, out, err = self.call(cmd, agent)
                 self.assertEqual(code, 0, err)
                 self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
+
+    def test_reading_the_workflow_state_does_not_prompt(self):
+        code, out, err = self.call('python3 "%s/tools/github/cli.py" workflow-status' % self.ROOT, self.AGENT)
+        self.assertEqual((code, out.strip()), (0, ""), err)
 
     def test_deploy_prompts_and_planning_does_not(self):
         code, out, err = self.call('python3 "%s/tools/deploy/cli.py" deploy req-20261004-000000-abcdef' % self.ROOT, self.AGENT)

@@ -13,7 +13,11 @@
   "tagging": {"<tag>": "<rule or default>"},        # confirmed tagging conventions
   "deployment_auth": "azure-cli-user" | "github-actions-oidc" | "managed-identity",
   "preferences": {"<name>": "<value>"},             # non-secret preferences and defaults
-  "accepted_findings": {"<check id>": "<reason>"},  # scanner findings the user accepted
+  "accepted_findings": {"<check id>@<file>:<resource>": "<reason>"},
+                                                    # scanner findings the user accepted, one
+                                                    # resource each (ADR-028). A bare
+                                                    # "<check id>" key is the pre-0.6.0 form:
+                                                    # still readable, no longer applied.
   "updated_at": "<UTC ISO 8601>"
 }
 
@@ -33,6 +37,7 @@ ENV_NAME = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 REGION = re.compile(r"^[a-z][a-z0-9]{2,30}$")
 PATH_PART = re.compile(r"^[A-Za-z0-9._-]+$")
 MAP_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+FINDING_KEY = re.compile(r"^[A-Z][A-Z0-9_]{1,39}@[A-Za-z0-9._/-]{1,200}:[A-Za-z0-9._/-]{1,120}$")
 MAX_MAP = 50
 MAX_VALUE = 500
 
@@ -95,11 +100,24 @@ def check_env_list(field, v):
     return v
 
 
+def finding_key(code, file, resource):
+    """The accepted_findings key for one finding on one resource, or None when the file or
+    resource name cannot be written as a key (suppress that one in code instead)."""
+    key = "%s@%s:%s" % (code, file, resource)
+    return key if FINDING_KEY.match(key) and ".." not in key else None
+
+
+def is_scoped_finding(key):
+    return bool(FINDING_KEY.match(key))
+
+
 def check_map(field, v):
     if not isinstance(v, dict) or len(v) > MAX_MAP:
         raise InvalidInput("%s must be an object with at most %d entries" % (field, MAX_MAP))
     for k, val in v.items():
-        if not MAP_KEY.match(k):
+        if field == "accepted_findings" and is_scoped_finding(k):
+            pass
+        elif not MAP_KEY.match(k):
             raise InvalidInput("invalid key in %s (letters, digits, '_', '.', '-'; starts "
                                "with a letter)" % field)
         if field == "accepted_findings" and (not isinstance(val, str) or len(val.strip()) < 10):

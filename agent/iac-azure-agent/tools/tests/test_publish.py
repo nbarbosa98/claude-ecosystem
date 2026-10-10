@@ -13,6 +13,7 @@ from state import machine as M
 from state.store import StateStore
 
 GITHUB_CLI = os.path.join(TOOLS, "github", "cli.py")
+FINDING = "CKV_AZURE_35@infra/modules/storage.bicep:Microsoft.Storage/storageAccounts.sa"
 
 FAKE_GH_PR = '''#!%s
 import json, os, subprocess, sys
@@ -49,8 +50,11 @@ elif args[:2] == ["pr", "create"]:
 elif args[:2] == ["pr", "view"]:
     save()
     pr = [p for p in state["prs"] if str(p["number"]) == args[2]][0]
-    print(json.dumps({"url": pr["url"], "state": pr["state"], "headRefOid": oid(pr["head"]),
-                      "mergedAt": None, "baseRefName": pr["baseRefName"]}))
+    if fail == "view":
+        sys.stderr.write("gh: HTTP 502\\n"); sys.exit(1)
+    print(json.dumps({"url": pr["url"], "state": pr["state"],
+                      "headRefOid": pr.get("headRefOid") or oid(pr["head"]),
+                      "mergedAt": pr.get("mergedAt"), "baseRefName": pr["baseRefName"]}))
 else:
     save(); sys.stderr.write("fake gh: unsupported\\n"); sys.exit(1)
 ''' % sys.executable
@@ -287,19 +291,65 @@ class AcceptedFindings(PublishCase):
         self.write("infra/modules/storage.bicep", STORAGE + "// PUBLIC\n")
         code, out = self.cli(VALIDATE_CLI, "run", env=self.env)
         self.assertEqual({r["check"]: r["result"] for r in out["results"]}["security-scan"], "failed")
-        code, out = self.cli(CONFIG_CLI, "set", "accepted_findings.CKV_AZURE_35", "short")
+        sec = {r["check"]: r for r in out["results"]}["security-scan"]
+        key = sec["findings"][0]["accept_key"]                     # the tool prints the key to use
+        self.assertEqual(key, "accepted_findings." + FINDING)
+        code, out = self.cli(CONFIG_CLI, "set", key, "short")
         self.assertEqual(code, EXIT_INVALID)                       # a real reason is required
         code, out = self.cli(CONFIG_CLI, "set", "accepted_findings.CKV_AZURE_35",
                              "Public endpoint agreed for the dev sandbox only")
+        self.assertEqual(code, EXIT_INVALID)                       # never for the whole project
+        code, out = self.cli(CONFIG_CLI, "set", key, "Public endpoint agreed for the dev sandbox only")
         self.assertEqual(code, 0, out)
         code, out = self.cli(VALIDATE_CLI, "run", env=self.env)
         sec = {r["check"]: r for r in out["results"]}["security-scan"]
         self.assertEqual(sec["result"], "warning")
         self.assertIn("dev sandbox", sec["findings"][0]["accepted"])
         self.assertEqual(out["verdict"], "passed_with_warnings")
-        self.cli(CONFIG_CLI, "unset", "accepted_findings.CKV_AZURE_35")
+        self.cli(CONFIG_CLI, "unset", key)
         code, out = self.cli(VALIDATE_CLI, "run", env=self.env)
         self.assertEqual({r["check"]: r["result"] for r in out["results"]}["security-scan"], "failed")
+
+    def test_an_acceptance_covers_one_resource_not_the_next_one_with_the_same_finding(self):
+        self.ws().clone()
+        self.write("infra/modules/storage.bicep", STORAGE + "// PUBLIC\n")
+        ConfigStore(self.project).set_value("accepted_findings." + FINDING,
+                                            "Public endpoint agreed for the dev sandbox only")
+        self.write("infra/modules/archive.bicep", STORAGE + "// PUBLIC\n")
+        code, out = self.cli(VALIDATE_CLI, "run", env=self.env)
+        sec = {r["check"]: r for r in out["results"]}["security-scan"]
+        self.assertEqual(sec["result"], "failed")
+        by_file = {f["file"]: f for f in sec["findings"]}
+        self.assertIn("accepted", by_file["infra/modules/storage.bicep"])
+        self.assertNotIn("accepted", by_file["infra/modules/archive.bicep"])
+        self.assertIn("archive.bicep", by_file["infra/modules/archive.bicep"]["accept_key"])
+
+    def test_project_wide_acceptance_from_an_older_version_is_reported_and_not_applied(self):
+        self.ws().clone()
+        self.write("infra/modules/storage.bicep", STORAGE + "// PUBLIC\n")
+        store = ConfigStore(self.project)
+        with open(store.path) as f:
+            cfg = json.load(f)
+        cfg["accepted_findings"] = {"CKV_AZURE_35": "Public endpoint agreed for the dev sandbox only"}
+        with open(store.path, "w") as f:
+            json.dump(cfg, f)
+        self.assertIn("CKV_AZURE_35", store.load()["accepted_findings"])   # still a readable config
+        code, out = self.cli(VALIDATE_CLI, "run", env=self.env)
+        sec = {r["check"]: r for r in out["results"]}["security-scan"]
+        self.assertEqual(sec["result"], "failed")                  # fails again: closed, not open
+        self.assertIn("not applied (CKV_AZURE_35)", sec["detail"])
+        code, out = self.cli(CONFIG_CLI, "unset", "accepted_findings.CKV_AZURE_35")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("accepted_findings", out["config"])
+
+    def test_acceptance_that_matches_nothing_is_reported(self):
+        self.ws().clone()
+        ConfigStore(self.project).set_value("accepted_findings." + FINDING,
+                                            "Public endpoint agreed for the dev sandbox only")
+        code, out = self.cli(VALIDATE_CLI, "run", env=self.env)
+        sec = {r["check"]: r for r in out["results"]}["security-scan"]
+        self.assertEqual(sec["result"], "passed")
+        self.assertIn("match no finding", sec["detail"])
 
 
 class ReadBack(PublishCase):
@@ -375,9 +425,9 @@ class NoIdentifiersInPublicText(PublishCase):
 
 class AcceptedFindingsInPullRequest(PublishCase):
     def test_accepted_findings_and_reasons_are_listed(self):
-        ConfigStore(self.project).set_value("accepted_findings.CKV_AZURE_35",
+        ConfigStore(self.project).set_value("accepted_findings." + FINDING,
                                             "Public endpoint agreed for the dev sandbox only")
         rid = self.ready()
         code, out = self.cli(GITHUB_CLI, "preview", rid, env=self.env)
-        self.assertIn("`CKV_AZURE_35`: Public endpoint agreed for the dev sandbox only", out["pull_request_body"])
+        self.assertIn("`%s`: Public endpoint agreed for the dev sandbox only" % FINDING, out["pull_request_body"])
         self.assertIn("not passes", out["pull_request_body"])

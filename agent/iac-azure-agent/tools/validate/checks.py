@@ -7,7 +7,7 @@ failed, warning, skipped, unavailable (state/machine.py CHECK_RESULTS):
 Neither is ever reported as passed. Established tools do the real work (Bicep CLI,
 Checkov); the only custom checks are structure, a secret scan and a Bicep-only check.
 
-Nothing here contacts Azure. Deployment validation and what-if belong to Milestone 5.
+Nothing here contacts Azure. Azure-side validation and what-if are run by deploy/cli.py plan.
 """
 import json
 import os
@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 
+from config import schema
 from lib import secret_guard
 from workspace import bicep_scan
 
@@ -170,7 +171,12 @@ def check_secrets(ws, files):
 
 
 def check_security(ws, accepted=None):
+    """`accepted` is the config's accepted_findings. Only per-resource keys apply; a bare
+    check ID (the form used before 0.6.0) is reported and otherwise ignored, so the
+    finding fails again until it is accepted for the resource it concerns."""
     accepted = accepted or {}
+    legacy = sorted(k for k in accepted if not schema.is_scoped_finding(k))
+    used = set()
     r = run_tool(["checkov", "-d", ws.infra_root, "--framework", "bicep", "-o", "json",
                   "--quiet", "--compact"], ws.dir)
     if r is None:
@@ -193,28 +199,40 @@ def check_security(ws, accepted=None):
         parse_errors += int(summary.get("parsing_errors", 0) or 0)
         for item in res.get("failed_checks", []) or []:
             f = _finding(item, ws.infra_root)
-            if f["code"] in accepted:
-                f["accepted"] = bicep_scan.clean(accepted[f["code"]], 200)
+            key = schema.finding_key(f["code"], f["file"], f["resource"])
+            if key and key in accepted:
+                f["accepted"] = bicep_scan.clean(accepted[key], 200)
+                used.add(key)
                 suppressed.append(f)
             else:
+                if key:
+                    f["accept_key"] = "accepted_findings." + key
                 failed.append(f)
         for item in res.get("skipped_checks", []) or []:
             f = _finding(item, ws.infra_root)
             f["suppressed"] = bicep_scan.clean((item.get("check_result") or {}).get("suppress_comment") or "no reason given", 200)
             suppressed.append(f)
+    note = ""
+    if legacy:
+        note += (" %d project-wide acceptance(s) from before 0.6.0 are not applied (%s): accept "
+                 "the finding per resource and unset them." % (len(legacy), ", ".join(legacy[:10])))
+    unused = sorted(k for k in accepted if schema.is_scoped_finding(k) and k not in used)
+    if unused:
+        note += (" %d acceptance(s) in the config match no finding any more (%s)."
+                 % (len(unused), ", ".join(unused[:10])))
     if parse_errors:
         return result("security-scan", "failed", "Checkov could not parse %d file(s)" % parse_errors, failed)
     if failed:
-        return result("security-scan", "failed", "%d finding(s), %d check(s) passed, %d suppressed"
-                      % (len(failed), passed, len(suppressed)), failed + suppressed)
+        return result("security-scan", "failed", "%d finding(s), %d check(s) passed, %d suppressed.%s"
+                      % (len(failed), passed, len(suppressed), note), failed + suppressed)
     if suppressed:
         return result("security-scan", "warning", "%d check(s) passed; %d finding(s) accepted in "
                                                   "the project config or suppressed in code. They "
-                                                  "are not passes."
-                      % (passed, len(suppressed)), suppressed)
+                                                  "are not passes.%s"
+                      % (passed, len(suppressed), note), suppressed)
     if not passed:
-        return result("security-scan", "skipped", "Checkov found no Bicep resources to check")
-    return result("security-scan", "passed", "%d check(s) passed, no findings" % passed)
+        return result("security-scan", "skipped", "Checkov found no Bicep resources to check." + note)
+    return result("security-scan", "passed", "%d check(s) passed, no findings.%s" % (passed, note))
 
 
 def _finding(item, infra_root):
@@ -226,7 +244,7 @@ def _finding(item, infra_root):
             "guideline": bicep_scan.clean(item.get("guideline") or "", 300)}
 
 
-NOT_RUN = ["Azure deployment validation and what-if: these need Azure and arrive with Milestone 5."]
+NOT_RUN = ["Azure deployment validation and what-if: these need Azure and are run by deploy/cli.py plan."]
 
 
 def run_all(ws, accepted=None):

@@ -50,7 +50,9 @@ If `high_risk_flags` is not empty (deletion, stateful replacement, data loss, pu
 
 ## 4. Deploy
 
-`A deploy ID`. Claude Code asks the user to allow it. Before changing anything the tool re-runs what-if and refuses if the result is no longer the approved change set, if the files or compiled parameters differ, or if az is signed in elsewhere. A refusal means: plan again and get a new approval.
+`A deploy ID`. Claude Code asks the user to allow it. Before changing anything the tool re-runs what-if and refuses if the result is no longer the approved change set, if the files or compiled parameters differ, or if az is signed in elsewhere. Such a refusal means: plan again and get a new approval.
+
+Production environments (`requires_merged_pull_request: true` in the plan output): the tool also reads the pull request from GitHub and refuses until it is merged into the default branch at the published commit. Tell the user this before asking for approval. Merging is theirs to do; never merge, and never suggest deploying to another environment name to get around it. After they merge, run `A deploy ID` again: the approval stays valid. If commits were added to the pull request after publishing, the merged code is not what this request validated; say so and start a new request from the merged code.
 
 - Exit 0: report `status`, the deployment name, correlation ID and time, the outputs, and the resources **Azure reports**. Say plainly that these are not yet verified.
 - Failure: quote the message. It says which resources Azure created before the failure and which failed, and that nothing was rolled back. The status is `failed` or `partial`. Do not deploy again. Diagnose from the evidence, explain the impact, propose a remedy, and get the user's decision; a remedy that changes the design, permissions, cost or scope needs a new approval. Never delete resources to "clean up" a failed deployment unless the user asks for exactly that.
@@ -64,6 +66,8 @@ If `high_risk_flags` is not empty (deletion, stateful replacement, data loss, pu
 - **independently verified**: resources read back one by one, with their state.
 
 Then each check with its result. `also_present` lists resources in the resource group that were not in the plan; disks Azure creates with a VM are expected, anything else is a warning to explain. If verification fails, say so; do not call the deployment done. When it passes: `S complete ID`.
+
+Failures and interruptions at any stage: `${CLAUDE_PLUGIN_ROOT}/docs/recovery.md` lists each message and what to do.
 
 Give the user the useful identifiers and endpoints from `outputs` (never secrets), any warnings, the running cost if known, and how to remove the deployment. Removal is a deletion the user performs or explicitly asks for.
 

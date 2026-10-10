@@ -9,6 +9,8 @@ this process. The checks in `deploy()` are therefore the gate on that path
   - the required permission rules are present;
   - az is signed in to exactly the approved tenant and subscription;
   - the working copy is at the approved commit, clean, with the validated files;
+  - for a production environment, GitHub reports the request's pull request as merged
+    into the default branch at exactly the published commit (ADR-031);
   - the compiled template and parameters hash to the approved inputs hash;
   - a fresh what-if returns exactly the approved change set and risk flags.
 Then it runs one create, never retried, in Incremental mode. Nothing is deleted or
@@ -21,6 +23,7 @@ import subprocess
 
 from deploy import whatif
 from deploy.azrun import AzFailure
+from github import publisher
 from lib.errors import ExternalUnavailable, InvalidInput, Refused
 from setup import permissions
 from state import machine
@@ -92,6 +95,25 @@ def require_published_tree(ws, rec):
         raise Refused("the files differ from the validated, published files; nothing was done")
 
 
+def require_merged(ws, rec, run_gh=None):
+    """Production only (ADR-031): the pull request must be merged, and what was merged must
+    be the commit that was validated, published and approved. Read from GitHub each time."""
+    m = publisher.merge_state(ws, rec, run_gh or publisher.gh)
+    if not m["merged"]:
+        raise Refused("a production deployment needs the pull request to be merged first; "
+                      "%s is %s. Merging is yours to do. Nothing was deployed."
+                      % (m["url"], str(m["state"] or "unknown").lower()))
+    if not m["base_is_default"]:
+        raise Refused("the pull request was merged into %r, not the default branch %r. "
+                      "Nothing was deployed." % (m["base"], ws.default_branch))
+    if not m["head_is_published_commit"]:
+        raise Refused("the pull request was merged at %s, not at the published and approved "
+                      "commit %s: commits were added after publishing. Nothing was deployed; "
+                      "this needs a new request from the merged code."
+                      % (str(m["head"])[:12], rec["git"]["commit"][:12]))
+    return m
+
+
 def preview(az, dep):
     """Azure-side validation, then what-if. Both are read-only."""
     val = az.read(az_args("validate", dep))
@@ -139,6 +161,7 @@ def plan(az, ws, store, rec, environment, tenant, subscription, location=None, r
             "counts": parsed["counts"], "change_set": parsed["change_set"],
             "uncertain": parsed["uncertain"], "risk_flags": machine.risk_flags(rec, envs),
             "resource_groups": groups, "state": rec["state"],
+            "requires_merged_pull_request": environment in envs,
             "note": "What-if is Azure's prediction, not a guarantee. Entries under `uncertain` "
                     "could not be evaluated."}
 
@@ -183,7 +206,7 @@ def _info(dep, shown):
             "output_resources": [whatif.short_id(r.get("id", "")) for r in p.get("outputResources") or []]}
 
 
-def deploy(az, ws, store, rec):
+def deploy(az, ws, store, rec, run_gh=None):
     envs = store.production_envs()
     machine.reconcile(rec, envs)
     if rec["status"] != "active" or rec["state"] != "DEPLOYMENT":
@@ -208,6 +231,7 @@ def deploy(az, ws, store, rec):
     target, dep = rec["target"], rec["plan"]["deployment"]
     az.require_context(target["tenant_id"], target["subscription_id"])
     require_published_tree(ws, rec)
+    merged = require_merged(ws, rec, run_gh) if target["environment"] in envs else None
     now = inputs(ws, target["environment"])
     if now["inputs_hash"] != dep["inputs_hash"] or now["template"] != dep["template"]:
         raise Refused("the compiled template or parameters differ from what was approved (for "
@@ -254,6 +278,7 @@ def deploy(az, ws, store, rec):
         machine.step_end(r, "succeeded" if status == "succeeded" else "failed")
     rec, _ = store.mutate(rec["id"], record)
     return {"id": rec["id"], "status": status, "deployment": info,
+            "merged_pull_request": merged,
             "planned": rec["plan"]["change_set"],
             "reported_by_azure": info["output_resources"],
             "independently_verified": [],

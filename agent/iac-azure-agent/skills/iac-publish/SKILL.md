@@ -46,4 +46,13 @@ Retry a transient failure once. If it fails again, stop and report.
 
 ## After publishing
 
-The request stays in GIT_REVIEW. Deployment (target, what-if, deployment approval) is Milestone 5. Tell the user the pull request is theirs to review and merge, and that nothing has been deployed.
+The request stays in GIT_REVIEW. Deployment (target, what-if, deployment approval) is `/iac-deploy`. Tell the user the pull request is theirs to review and merge, and that nothing has been deployed. For a production environment the pull request must be merged before it can be deployed; other environments can be deployed from the branch.
+
+## The validation workflow
+
+Run `G workflow-status` (it fetches and changes nothing). If `state` is `absent` or `differs`, tell the user that the repository does not have the current validation workflow and what it does: on pull requests that touch the infrastructure directory it builds and lints the Bicep, and reports Checkov findings; it uses no secrets and does not touch Azure. Offer to install it. Only if they say yes: `G install-workflow`. Claude Code asks them to allow it. It opens a separate pull request with that one file, which is theirs to review and merge.
+
+- You cannot write the workflow file yourself and must not try: it comes from the plugin's fixed template.
+- `lacks the workflow scope`: the user runs `gh auth refresh -s workflow` themselves.
+- `uncommitted changes`: a request is being implemented in the working copy; install the workflow after its files are recorded and published.
+- The workflow has not been run on GitHub Actions by this plugin's tests. Say so if the user asks whether it works.

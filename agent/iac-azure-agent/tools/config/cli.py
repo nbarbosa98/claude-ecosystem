@@ -10,8 +10,10 @@
 
 KEY: infra_root, region, environments (comma list), default_environment,
 production_environments (comma list), deployment_auth, repository.default_branch,
-naming.<name>, tagging.<name>, preferences.<name>, accepted_findings.<check id> (the value
-is the reason; the finding is then reported as accepted, never as passed).
+naming.<name>, tagging.<name>, preferences.<name>,
+accepted_findings.<check id>@<file>:<resource> (the value is the reason; that finding on
+that resource is then reported as accepted, never as passed. validate/cli.py run prints
+the exact key as `accept_key`).
 The project is the nearest ancestor of --project-dir (default: cwd) that contains .git.
 """
 import argparse

@@ -399,7 +399,8 @@ Docs checked on 2026-10-04:
   it "when explicitly configured"); committing through the GitHub API without a working
   copy (rejected: validation runs on local files, and the commit must be those files).
 - **Trade-off:** every change, however small, needs a pull request.
-- **Status:** DEFAULT.
+- **Status:** ACCEPTED (owner, 2026-10-10: keep pull-request-only; direct commits to a
+  development branch are not built).
 
 ## ADR-026 Publish gate: validation hash and a permission prompt, no separate approval
 
@@ -428,15 +429,23 @@ Docs checked on 2026-10-04:
 
 ## ADR-028 Accepted scanner findings live in the project config
 
-- **Decision:** `accepted_findings.<check id>` holds the reason a finding was accepted.
+- **Decision (owner, 2026-10-10, replaces the per-check-ID form):** a finding is accepted
+  for one resource. The key is `accepted_findings.<check id>@<file>:<resource>`, built from
+  what Checkov reports, and `validate/cli.py run` prints it as `accept_key`.
   Checkov still runs in full; accepted findings are moved from failed to a listed
   `accepted` group and the check result is `warning`. Setting one prompts the user (hook
   and required `ask` rule). In-code suppressions are still reported the same way.
 - **Alternatives:** every finding blocks (the Milestone 3 behaviour, which made dev-grade
   choices such as locally redundant storage fail every run); passing `--skip-check` to
   Checkov (rejected: the finding would disappear from the report).
-- **Trade-off:** acceptance is per check ID for the whole project, not per resource.
-- **Status:** DEFAULT (recommended to the owner, who said to proceed).
+- **Migration:** a bare check ID saved by 0.4.0 or 0.5.0 still loads, so the config is not
+  reported as corrupt, but it is no longer applied: the finding fails again and the check
+  says which old entries to replace. It fails closed. `set` refuses to create a bare key.
+- **Trade-off:** one entry per resource. A module used by several environments is one
+  resource in Bicep, so an acceptance cannot be limited to dev when the same module also
+  deploys prod. A resource name with characters outside letters, digits, `.`, `_`, `-` and
+  `/` cannot be keyed; suppress that one in code, which is reported the same way.
+- **Status:** ACCEPTED.
 
 ## ADR-029 Azure: the user's `az` session, never managed by the agent
 
@@ -470,16 +479,26 @@ Docs checked on 2026-10-04:
   and can be noisy; noise between the two runs would block a deployment until re-planned.
 - **Status:** DEFAULT.
 
-## ADR-031 Deployment does not require the pull request to be merged
+## ADR-031 Production deploys only from a merged pull request
 
-- **Decision:** the code must be published (pushed, read back) and validated, and the
-  deployment approval covers its commit. It does not have to be merged into the default
-  branch first.
-- **Reasoning:** for development environments, deploying a branch to try it is normal.
-  The owner was asked on 2026-10-05 whether to enforce "merged first" and has not decided.
-- **Alternatives:** require the pull request to be merged for every environment; require
-  it for production environments only (probably the right rule; needs the owner).
-- **Status:** OPEN.
+- **Decision (owner, 2026-10-10):** for every environment the code must be published
+  (pushed, read back) and validated, and the deployment approval covers its commit. For a
+  production environment (`production_environments` in the config, plus the built-in
+  names prod, production, prd) `deploy` also requires GitHub to report the request's pull
+  request as merged into the default branch with its head at the published commit.
+  Other environments deploy from the branch, unmerged.
+- **How it is checked:** `gh pr view` at deploy time, every time. The pull request state is
+  used instead of git ancestry so that squash and rebase merges count. A pull request
+  merged with commits added after publishing is refused: that code was not validated by
+  this request. GitHub unreachable means unknown, and nothing is deployed.
+- **Reasoning:** deploying a branch to try it is normal in development; production should
+  not run code nobody reviewed. Planning and approval do not need the merge, so the
+  what-if can be reviewed in the pull request before it is merged.
+- **Alternatives:** require a merge for every environment (rejected: trying a change in
+  dev would mean merging it first); keep no rule (rejected).
+- **Does not guarantee:** that the pull request was reviewed by someone else. Required
+  reviews are branch protection, which is the owner's to configure.
+- **Status:** ACCEPTED.
 
 ## ADR-032 Outcomes, recovery and verification
 
@@ -511,6 +530,52 @@ Docs checked on 2026-10-04:
 - **Accepted findings** are listed, with reasons, in the pull request text.
 - **Status:** ACCEPTED (fixes), with ADR-015 updated by this entry.
 
+## ADR-034 The validation workflow is installed by a tool from a fixed template
+
+- **Decision (owner, 2026-10-10):** `github/cli.py install-workflow` writes
+  `.github/workflows/iac-validate.yml` from `templates/iac-validate.yml`, commits that one
+  file on its own branch (`iac/validation-workflow-<content hash>`), pushes without force,
+  reads the remote back and opens a pull request into the default branch. The only value
+  filled in is the infrastructure root, which the config schema limits to letters, digits,
+  `.`, `_`, `-` and `/`. The command prompts the user (hook and a required `ask` rule).
+- **Reasoning:** ADR-022 keeps the model from writing outside the infrastructure root, and
+  a workflow file is code that runs in the user's repository. A fixed template means the
+  model never authors CI, and ADR-022 stays as it is.
+- **The workflow:** runs on `pull_request` (never `pull_request_target`) for changes under
+  the infrastructure root, with `permissions: contents: read`, no secrets and no Azure
+  sign-in. `bicep build` and `bicep lint` on every Bicep file fail the check. The checkout
+  action is pinned to a commit.
+- **Report only, on purpose:** `bicep build-params` (a parameter file that reads an
+  environment variable cannot compile on a runner that lacks it; seen on the first real
+  repository) and Checkov (accepted findings live in the user's config store, which the
+  runner cannot read, so a hard failure would contradict the validation recorded in the
+  pull request). The blocking security gate stays the local validation.
+- **Alternatives:** widen the write limit to `.github/workflows/` (rejected: the model
+  could then write arbitrary CI); print the file for the user to commit (rejected: manual
+  for every repository).
+- **Trade-off:** Checkov is installed unpinned with `pipx` in a job that has read-only
+  permissions and no secrets. The pinned checkout commit needs a template update to move.
+  The git credential needs the `workflow` scope, which the user grants themselves.
+- **UNVERIFIED:** the workflow has not run on GitHub Actions. Its shell steps were run
+  locally with the real Bicep CLI and Checkov against the first real repository
+  (2026-10-10); the installer is tested against a local bare repository and a fake `gh`.
+- **Status:** ACCEPTED.
+
+## ADR-035 PSRule for Azure deferred
+
+- **Decision (owner, 2026-10-10):** Checkov stays the only security scanner through
+  Milestone 6. PSRule for Azure needs PowerShell and would double the findings to fix or
+  accept. Revisit after real use shows what Checkov misses.
+- **Status:** DEFERRED.
+
+## Owner decisions recorded on 2026-10-10
+
+- ADR-034 workflow file: a tool installs a fixed template.
+- ADR-031 merged first: production environments only.
+- ADR-035 second scanner: deferred past Milestone 6.
+- ADR-025 direct commits to a development branch: not built; pull requests only.
+- ADR-028 accepted findings: per resource.
+
 ## Owner decisions recorded on 2026-10-04
 
 - ADR-011 session-wide shell guard: ACCEPTED as is. Enable the plugin per project.
@@ -520,8 +585,9 @@ Docs checked on 2026-10-04:
 
 ## Open
 
-- Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised).
-- How the Milestone 6 workflow file gets written, given ADR-022.
-- A second scanner (PSRule for Azure).
-- Whether deployment requires a merged pull request, at least for production (ADR-031).
-- Direct commits to a development branch (ADR-025) and per-resource acceptance of findings (ADR-028).
+- Live-session behaviour of the hook, the skills and the `ask` rules (not yet exercised),
+  including `agent_type` (ADR-022).
+- The validation workflow on GitHub Actions itself (ADR-034).
+- High-risk and failure paths, and resource-group scope, against real Azure.
+- Prompt evals for the Bicep the model writes.
+- A second scanner (ADR-035).

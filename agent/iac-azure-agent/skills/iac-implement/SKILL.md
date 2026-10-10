@@ -43,14 +43,14 @@ When the files are written: `W record-files ID` (the list comes from git; a chan
 
 1. `V run ID`. Results are recorded with a hash of the files checked.
 2. Report every check by name with its result, then the findings with file and line. Use these words exactly: passed, failed, warning, skipped, unavailable.
-3. `failed`: `S back ID --to IMPLEMENTATION --reason "<check>: <finding>"`, fix the cause, `W record-files ID`, advance, run again. Fix the code; never weaken a check, a linter rule or a security setting to get a pass. If a security finding is a deliberate, approved design choice, explain it and ask the user whether to suppress it.
+3. `failed`: `S back ID --to IMPLEMENTATION --reason "<check>: <finding>"`, fix the cause, `W record-files ID`, advance, run again. Fix the code; never weaken a check, a linter rule or a security setting to get a pass. If a security finding is a deliberate, approved design choice, explain it and ask the user whether to accept it for that resource: the finding's `accept_key` is the config key (`config/cli.py set <accept_key> "<reason>"`, which prompts them). An acceptance covers one resource; never accept on the user's behalf.
 4. `warning`: explain each one and whether you recommend fixing it now.
 5. `skipped` or `unavailable`: say what was not checked and why. Moving on needs the user to accept that explicitly; only then `S advance ID --to GIT_REVIEW --accept-incomplete`.
-6. Azure deployment validation and what-if are not run here (Milestone 5). Say so in the report.
+6. Azure deployment validation and what-if are not run here; they run in `/iac-deploy`. Say so in the report.
 
 ## Stop
 
-Publishing (commit, push, pull request) is Milestone 4 and deployment is Milestone 5. After validation, report and stop. The work stays on the local branch `iac/<ID>` in the working copy.
+Publishing (commit, push, pull request) is `/iac-publish` and deployment is `/iac-deploy`; the user invokes both. After validation, report and stop. The work stays on the local branch `iac/<ID>` in the working copy.
 
 ## Report
 
