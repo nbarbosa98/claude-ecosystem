@@ -9,8 +9,8 @@ verified, what is open; facts and assumptions kept apart) and stops for owner re
 | 2 | Discovery | First-run repository setup with read-only inspection through `gh`; `/iac-setup`, `/iac-repo`, `/iac-discover`; request profile; adaptive question rounds from a topic catalog; must-confirm topics; assumptions review; architecture proposal sections, rendering and approval; required permission rules checked before deployment approval | DONE (merged, PR #9) |
 | 3 | Bicep engineering | Working copy under the project (clone, sync, local work branch); inventory of existing Bicep; `/iac-implement` and the Bicep standards; hook write limits and git guard; changed files recorded from git; validation (structure, Bicep-only, secret scan, `bicep build`, `build-params`, `lint`, Checkov) recorded as check results bound to a file hash | DONE (merged, PR #10) |
 | 4 | GitHub integration | Publish preview; commit of the infrastructure directory on `iac/<id>`; push without force; remote head read back; pull request created or reused and fetched; branch, commit and PR recorded; partial failures recorded and resumable; accepted scanner findings; `gh` limited to reads for the agent | DONE (merged, PR #11) |
-| 5 | Azure integration | Context check against the confirmed tenant and subscription; Azure validation and what-if; change set, risk flags and uncertain changes; deployment through one tool that re-checks approval, inputs and a fresh what-if; classified failures; failed and partial outcomes; interrupted runs resolved from Azure; verification by reading resources back | IN REVIEW |
-| 6 | Automation and hardening | GitHub Actions validation workflow; security analysis; mocked end-to-end test; recovery procedures; final documentation | NOT STARTED |
+| 5 | Azure integration | Context check against the confirmed tenant and subscription; Azure validation and what-if; change set, risk flags and uncertain changes; deployment through one tool that re-checks approval, inputs and a fresh what-if; classified failures; failed and partial outcomes; interrupted runs resolved from Azure; verification by reading resources back | DONE (merged, PRs #12 and #13) |
+| 6 | Automation and hardening | GitHub Actions validation workflow installed by a tool from a fixed template; production deploys only from a merged pull request; scanner findings accepted per resource; security analysis; mocked end-to-end test of the production path; recovery procedures; final documentation | IN REVIEW |
 
 ## Milestone 1 exit criteria
 
@@ -63,3 +63,20 @@ verified, what is open; facts and assumptions kept apart) and stops for owner re
   subscription-scope deployment and verification.
 - Not verified: the skill, prompts and hook inside a live Claude Code session; high-risk
   and failure paths against real Azure; resource-group scope against real Azure.
+
+## Milestone 6 exit criteria
+
+- The unit tests pass with no network, Azure or GitHub access, including one test that
+  drives the production path through the CLIs: workflow pull request, publish, what-if,
+  approval and high-risk confirmation, refusal while unmerged, merge, deployment,
+  verification, completion.
+- A production deployment is refused while the pull request is open, closed, merged into
+  another branch, merged with later commits, or when GitHub cannot be read.
+- The workflow installer changes one file, never touches the default branch, never
+  forces, and hands the working copy back on the branch it was on.
+- An acceptance covers one resource; an acceptance from an earlier version is not applied.
+- The workflow's shell steps were run locally with the real Bicep CLI and Checkov against
+  the first real repository (2026-10-10).
+- Not verified: the workflow on GitHub Actions; the installer and the merged-first rule
+  against GitHub itself; the skills, prompts and hook inside a live Claude Code session;
+  high-risk and failure paths and resource-group scope against real Azure.

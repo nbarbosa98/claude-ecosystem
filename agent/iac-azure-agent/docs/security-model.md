@@ -1,6 +1,6 @@
 # Security model
 
-What protects the user's Azure estate, repository and secrets as of Milestone 5, what each layer
+What protects the user's Azure estate, repository and secrets as of Milestone 6 (0.6.0), what each layer
 guarantees, and what it does not. Decisions and sources: [decisions.md](decisions.md).
 
 ## Threats
@@ -22,6 +22,10 @@ guarantees, and what it does not. Decisions and sources: [decisions.md](decision
     people's commits are overwritten, or a push is reported that did not happen.
 12. Azure is changed without approval, differently from what was approved, in the wrong
     subscription, or a failed deployment is hidden or "repaired" destructively.
+13. Production runs code that was never merged, or code other than what was merged.
+14. CI in the user's repository is written by the model, runs with secrets or write
+    access, or runs code from an untrusted pull request with them.
+15. An accepted finding quietly covers a resource the user never looked at.
 
 ## Layers
 
@@ -57,16 +61,46 @@ Plugins cannot ship permission rules (ADR-001). The user adds the `ask` rules (R
 | 16 | Publish mechanics | Python code | Stages only the infrastructure root. Pushes one refspec, `iac/<id>`, never with force. Refuses to target the default branch. Has no merge, delete or rebase. A rejected push is reported as someone else's change. | Server-side rules: branch protection and required reviews are the repository owner's. |
 | 17 | Read-back | Python code | After the push, `git ls-remote` must show the commit or the result is an error. After creating the pull request it is fetched again; its address must belong to the configured repository. Each completed stage is recorded before the next starts, and a failure message lists what was verified. | That GitHub's state stays that way afterwards; `verify` re-reads it on request. |
 | 18 | `gh` limits for the agent (hook) | Claude Code `PreToolUse`, exit 2 | When `agent_type` names this agent: only read-only `gh` commands pass; `gh pr create/merge/close`, repository changes, secrets, workflow runs, `gh auth token` and `gh api` with a write method or fields are blocked. | Other sessions (by design). `gh` reached through a variable or script. |
-| 19 | Accepted findings | Python code, `ask` rule, hook | A finding is accepted only through the config with a reason of at least ten characters; the command prompts the user; the finding then shows as accepted with its reason, result `warning`. | That the reason is a good one. |
+| 19 | Accepted findings | Python code, `ask` rule, hook | A finding is accepted only through the config, for one resource (check ID, file and resource), with a reason of at least ten characters; the command prompts the user; the finding then shows as accepted with its reason, result `warning`. The same finding on another resource still fails. A project-wide acceptance from before 0.6.0 is not applied. | That the reason is a good one. An acceptance on a module covers every environment that module deploys to. |
 
 | # | Layer (Milestone 5) | Enforced by | Guarantees | Does not guarantee |
 | --- | --- | --- | --- | --- |
-| 20 | Deploy gate (`tools/deploy/executor.py`) | Python code, inside the process that calls Azure | The create runs only if: the request is in DEPLOYMENT with no unresolved deploy step; the deployment approval (and high-risk confirmation, when flags exist) matches the current target, change set, commit, files and compiled inputs; the required permission rules exist; `az` is signed in to exactly the approved tenant and subscription; the working copy is the published commit, clean; a fresh what-if equals the approved change set and flags. A record whose state was forced to DEPLOYMENT fails these checks. | That the human approved: the model runs the approve command (layer 3 prompts). That Azure does what what-if predicted. |
+| 20 | Deploy gate (`tools/deploy/executor.py`) | Python code, inside the process that calls Azure | The create runs only if: the request is in DEPLOYMENT with no unresolved deploy step; the deployment approval (and high-risk confirmation, when flags exist) matches the current target, change set, commit, files and compiled inputs; the required permission rules exist; `az` is signed in to exactly the approved tenant and subscription; the working copy is the published commit, clean; for a production environment, GitHub reports the pull request merged into the default branch at the published commit; a fresh what-if equals the approved change set and flags. A record whose state was forced to DEPLOYMENT fails these checks. | That the human approved: the model runs the approve command (layer 3 prompts). That Azure does what what-if predicted. |
 | 21 | Deploy mechanics | Python code | One `az deployment ... create`, incremental mode, never retried. No delete, rollback, role assignment, sign-in, context switch or feature registration exists in the tool. | Anything Azure does implicitly as part of a resource (for example a VM's disk). |
 | 22 | Outcome recording | Python code | Status comes from Azure's deployment record and operations: succeeded, failed, or partial with the resources that were created. A failed step blocks moving on. An interrupted step can only be resolved by reading Azure. | The state of resources after the read. |
 | 23 | Verification | Python code | Each planned resource is read back individually; VM power state is checked; unplanned resources in the created resource groups are reported; completion needs these checks to pass. | Behaviour inside the resources (an operating system that booted, an application that works). |
 | 24 | Failure classification (`tools/deploy/azrun.py`) | Python code | Sign-in, authorization, policy, quota, SKU, template, conflict and temporary failures are told apart; only reads are retried, at most twice, only for temporary failures. | A correct label for every Azure error text; unknown ones are `error`. |
 | 25 | Deploy prompt | The user's `ask` rule (required) and the hook | Claude Code asks the user before the deploy command runs. | The `az` call inside the tool is invisible to the hook, which is why layer 20 lives in the tool. |
+
+| # | Layer (Milestone 6) | Enforced by | Guarantees | Does not guarantee |
+| --- | --- | --- | --- | --- |
+| 26 | Merged first for production (`deploy/executor.py`, `github/publisher.py`) | Python code, `gh pr view` at deploy time | A production deployment runs only when the request's pull request is merged, into the default branch, with its head at the published and approved commit. Squash and rebase merges count. GitHub unreachable is unknown: nothing is deployed. | That anyone other than the author reviewed it: required reviews are branch protection, which is the user's. Non-production environments deploy unmerged, by decision (ADR-031). |
+| 27 | Workflow installer (`github/workflow.py`) | Python code, `ask` rule, hook | The workflow file is a fixed template; the only input is the validated infrastructure root. One file is committed, on its own branch, pushed without force, read back, offered as a pull request. The default branch is never touched and the write limit of layer 10 is unchanged. The working copy is handed back on the branch it was on; uncommitted work is refused, not carried. | That the user reads the pull request before merging it. |
+| 28 | The workflow itself (`templates/iac-validate.yml`) | GitHub Actions | `pull_request` only, `contents: read`, no secrets, no Azure sign-in, checkout pinned to a commit with credentials not persisted. Bicep build and lint block. | Security findings and parameter files are report only (ADR-034). Checkov is installed unpinned. Whether the check is required to merge is branch protection, which is the user's. Not yet run on GitHub Actions. |
+
+## Residual risks
+
+What is left after every layer above, most serious first.
+
+1. **The human check is a permission prompt.** The model runs the approve, publish and
+   deploy commands; Claude Code's prompt on them is what puts a person in the loop. The
+   tools check that the `ask` rules exist, not that Claude Code honours them in every
+   permission mode. Not exercised in a live session yet.
+2. **The hook reads command text.** A change to Azure made through a variable, a script
+   file, an SDK or another program is not seen. The hook is a guardrail, not a sandbox;
+   the Azure role of the signed-in identity is the real limit on what can be changed.
+3. **The agent deploys with the user's own Azure identity.** Whatever that identity may
+   do, an approved template may do. Use an identity scoped to what the project needs.
+4. **What-if is a prediction.** It can miss changes and cannot predict capacity or policy
+   failures. Risk flags are rules over its output and can miss an unusual exposure.
+5. **Prompt injection.** Text from the repository, tool output or Azure can try to steer
+   the model. The defence is an instruction to the model plus the gates above, which do
+   not depend on the model's judgement: approvals are hash-bound and prompted.
+6. **Secrets without a recognisable shape** pass the secret guard and the secret scan.
+7. **No rollback.** A failed or partial deployment leaves resources behind for the user
+   to remove.
+8. **Supply chain.** `bicep`, `checkov`, `az`, `gh` and `git` are whatever is installed.
+   Bicep restores public registry modules if the code uses them.
 
 ## Secret guard
 
@@ -88,6 +122,10 @@ Not caught: a secret with no recognisable shape, encoded or split secrets, secre
 places the tools never write.
 
 ## What a reviewer should check
+
+- The workflow template: read `templates/iac-validate.yml` once. It is the only CI the
+  plugin ever installs, and the tests assert its trigger, permissions and pinning.
+- The merged-first rule has a test per refusal (`tools/tests/test_hardening.py`).
 
 - The deploy tool calls Azure from inside its own process, where the hook cannot see it.
   Its own checks (layer 20) are the only gate on that path. Each one has a test that

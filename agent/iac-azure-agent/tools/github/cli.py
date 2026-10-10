@@ -9,6 +9,12 @@
   cli.py [--project-dir DIR] verify ID
       Read GitHub again: does the remote branch still match the recorded commit, and what
       state is the pull request in. Changes nothing.
+  cli.py [--project-dir DIR] workflow-status
+      Is the validation workflow on the default branch, and is it the current template.
+      Fetches; changes nothing on GitHub.
+  cli.py [--project-dir DIR] install-workflow
+      Write .github/workflows/iac-validate.yml from the plugin's fixed template on its own
+      branch, push it, read the remote back and open a pull request. Not tied to a request.
 
 publish never touches the default branch, never forces, never merges. It refuses unless
 validation ran on exactly the files being committed. `verified` in the output lists what
@@ -22,6 +28,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.store import ConfigStore  # noqa: E402
+from github import workflow  # noqa: E402
 from github.publisher import Publisher, check_message, pr_body, preflight  # noqa: E402
 from lib import paths  # noqa: E402
 from lib.cli_util import run  # noqa: E402
@@ -117,6 +124,15 @@ def handler(a):
     root = paths.resolve_project_root(a.project_dir)
     ws = Workspace(root, ConfigStore(root).load())
     store = StateStore(root)
+    if a.cmd == "workflow-status":
+        return workflow.status(ws)
+    if a.cmd == "install-workflow":
+        perms = permissions.check(root)
+        if not perms["ok"]:
+            raise Refused("installing the workflow is refused until the required permission "
+                          "rules are in the user's Claude Code settings: %s"
+                          % "; ".join(perms["missing_rules"] + perms["conflicts"] + perms["problems"]))
+        return workflow.install(ws, Publisher(ws))
     rec = store.load(a.id)
     if a.cmd == "preview":
         facts = preflight(ws, rec)
@@ -144,6 +160,8 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("preview").add_argument("id")
     sub.add_parser("verify").add_argument("id")
+    sub.add_parser("workflow-status")
+    sub.add_parser("install-workflow")
     s = sub.add_parser("publish")
     s.add_argument("id")
     s.add_argument("--message", required=True)

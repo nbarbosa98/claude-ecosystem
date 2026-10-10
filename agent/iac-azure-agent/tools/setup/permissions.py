@@ -39,8 +39,12 @@ REQUIRED = {
                     "python3 /p/tools/github/cli.py --project-dir /x publish req-1 --message x"]},
     "accept-finding": {
         "rule": "Bash(*tools/config/cli.py* set accepted_findings.*)",
-        "samples": ['python3 "/p/tools/config/cli.py" set accepted_findings.CKV_AZURE_206 "LRS is fine in dev"',
-                    "python3 /p/tools/config/cli.py --project-dir /x set accepted_findings.CKV_AZURE_35 reason"]},
+        "samples": ['python3 "/p/tools/config/cli.py" set accepted_findings.CKV_AZURE_206@infra/main.bicep:Microsoft.Storage/storageAccounts.sa "LRS is fine in dev"',
+                    "python3 /p/tools/config/cli.py --project-dir /x set accepted_findings.CKV_AZURE_35@infra/a.bicep:T.x reason"]},
+    "install-workflow": {
+        "rule": "Bash(*tools/github/cli.py* install-workflow*)",
+        "samples": ['python3 "/p/tools/github/cli.py" install-workflow',
+                    "python3 /p/tools/github/cli.py --project-dir /x install-workflow"]},
     "deploy": {
         "rule": "Bash(*tools/deploy/cli.py* deploy *)",
         "samples": ['python3 "/p/tools/deploy/cli.py" deploy req-1',

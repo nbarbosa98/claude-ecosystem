@@ -1,0 +1,90 @@
+# Installed by iac-azure-agent (tools/github/cli.py install-workflow). Template version 1.
+# The tool replaces this file when its template changes; edits made here are overwritten
+# by the next install, in a pull request you review.
+#
+# What it does: compiles and lints the Bicep under __INFRA_ROOT__ on every pull request
+# that touches it (a failure blocks), and reports on parameter files and Checkov findings
+# (these never block). It does not sign in to Azure, uses no secrets and deploys nothing.
+name: iac-validate
+
+on:
+  pull_request:
+    paths:
+      - "__INFRA_ROOT__/**"
+      - ".github/workflows/iac-validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iac-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bicep:
+    name: Bicep build and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      INFRA_ROOT: "__INFRA_ROOT__"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Find the Bicep CLI
+        run: |
+          if ! command -v bicep >/dev/null 2>&1; then
+            az bicep install
+            echo "$HOME/.azure/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Bicep version
+        run: bicep --version
+      - name: Build every Bicep file
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            echo "::group::bicep build $f"
+            bicep build "$f" --stdout > /dev/null || status=1
+            echo "::endgroup::"
+          done < <(find "$INFRA_ROOT" -type f -name '*.bicep' -print0)
+          exit "$status"
+      # Report only: a parameter file that reads an environment variable (an SSH key, an
+      # object ID) cannot compile on a runner that does not have it, so a failure here is
+      # shown as a warning. The agent compiles parameter files on your machine before
+      # publishing and again before deploying.
+      - name: Build every parameter file (report only)
+        run: |
+          while IFS= read -r -d '' f; do
+            echo "::group::bicep build-params $f"
+            bicep build-params "$f" --stdout > /dev/null \
+              || echo "::warning file=$f::bicep build-params failed for $f (see the log)"
+            echo "::endgroup::"
+          done < <(find "$INFRA_ROOT" -type f -name '*.bicepparam' -print0)
+      - name: Lint every Bicep file
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            echo "::group::bicep lint $f"
+            bicep lint "$f" || status=1
+            echo "::endgroup::"
+          done < <(find "$INFRA_ROOT" -type f -name '*.bicep' -print0)
+          exit "$status"
+
+  security:
+    name: Checkov (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      INFRA_ROOT: "__INFRA_ROOT__"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Checkov
+        run: pipx install checkov
+      # Report only: findings accepted for a resource live in the agent's project config,
+      # which this runner cannot read, so a hard failure here would contradict the
+      # validation recorded in the pull request text. Read the findings in the log.
+      - name: Run Checkov
+        run: checkov -d "$INFRA_ROOT" --framework bicep --quiet --compact --soft-fail

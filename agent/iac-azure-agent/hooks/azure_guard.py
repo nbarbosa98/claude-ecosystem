@@ -28,16 +28,17 @@ Bash rules:
      The deploy command (deploy cli.py deploy) prompts the same way. The az call it makes
      runs inside that tool and is not seen by this hook; the tool's own approval checks are
      the gate on that path.
-  9. Publishing (github cli.py publish) and accepting a scanner finding (config cli.py set
-     accepted_findings.<id>) are answered with "ask" like the approval commands.
+  9. Publishing (github cli.py publish), installing the validation workflow (github cli.py
+     install-workflow) and accepting a scanner finding (config cli.py set
+     accepted_findings.<key>) are answered with "ask" like the approval commands.
  10. GitHub CLI, only when the caller is the iac-azure-agent agent: read-only `gh` commands
      pass; `gh pr create/merge/close`, `gh repo` changes, `gh api` with a write method or
      fields, and everything else are denied. Publishing goes through github/cli.py, which
      checks validation first; merging is the user's decision. Other sessions are untouched.
   8. git in the working copy (<project>/.iac-azure-agent/workspace/...), or anywhere when
      the caller is the iac-azure-agent agent: only read-only git subcommands pass. Branches
-     are created by tools/workspace/cli.py; commit and push belong to the publish tool
-     (Milestone 4), which checks validation and approval first.
+     are created by tools/workspace/cli.py; commit and push belong to the publish tool,
+     which checks validation and approval first.
 Write/Edit/NotebookEdit:
   - a file_path inside the store is denied;
   - a file_path inside a working copy is allowed only under that project's configured
@@ -104,6 +105,7 @@ APPROVAL_CMD = re.compile(r"tools/state/cli\.py\b.*\s(approve|confirm-risk)\b", 
 REPO_SWITCH_CMD = re.compile(r"tools/config/cli\.py\b.*\s(set-repo|clear)\b", re.S)
 DEPLOY_CMD = re.compile(r"tools/deploy/cli\.py\b.*\sdeploy\b", re.S)
 PUBLISH_CMD = re.compile(r"tools/github/cli\.py\b.*\spublish\b", re.S)
+WORKFLOW_CMD = re.compile(r"tools/github/cli\.py\b.*\sinstall-workflow\b", re.S)
 ACCEPT_CMD = re.compile(r"tools/config/cli\.py\b.*\sset\s+accepted_findings\.", re.S)
 GH_READ = {("auth", "status"), ("repo", "view"), ("repo", "list"), ("pr", "view"), ("pr", "list"),
            ("pr", "status"), ("pr", "checks"), ("pr", "diff"), ("issue", "view"), ("issue", "list"),
@@ -368,6 +370,10 @@ def check_bash(command, cwd=None, agent=False):
     if PUBLISH_CMD.search(norm):
         return "ask", ("iac-azure-agent: this commits the validated files, pushes a branch to "
                        "GitHub and opens a pull request. Allow it only if you asked for that.")
+    if WORKFLOW_CMD.search(norm):
+        return "ask", ("iac-azure-agent: this pushes a branch that adds a GitHub Actions "
+                       "workflow to your repository and opens a pull request. Allow it only "
+                       "if you asked for that.")
     if ACCEPT_CMD.search(norm):
         return "ask", ("iac-azure-agent: this accepts a security scanner finding for this "
                        "project. Allow it only if you agreed to accept that finding.")

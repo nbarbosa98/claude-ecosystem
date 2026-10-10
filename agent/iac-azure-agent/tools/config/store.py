@@ -54,6 +54,11 @@ class ConfigStore:
             cfg[key] = schema.check_env_list(key, items)
         elif "." in key and key.split(".", 1)[0] in schema.MAP_FIELDS:
             field, name = key.split(".", 1)
+            if field == "accepted_findings" and not schema.is_scoped_finding(name):
+                raise InvalidInput("a finding is accepted for one resource: use the key "
+                                   "accepted_findings.<check id>@<file>:<resource>, as printed in "
+                                   "`accept_key` by validate/cli.py run. A check ID alone is "
+                                   "no longer accepted for the whole project.")
             m = dict(cfg.get(field, {}))
             m[name] = value
             cfg[field] = schema.check_map(field, m)

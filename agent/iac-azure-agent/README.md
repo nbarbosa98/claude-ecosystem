@@ -4,12 +4,16 @@ Provision, change, validate and manage Azure infrastructure in plain English. In
 is defined in Bicep, kept in a GitHub repository you configure per project, previewed
 with what-if, and deployed only after an approval bound to the exact target and change set.
 
-**Status: in development, Milestone 5 of 6 (Azure integration).** It sets up and inspects
+**Status: all six milestones built; Milestone 6 is in review.** It sets up and inspects
 your repository, asks the questions a request needs, produces an architecture proposal
 for your approval, writes the Bicep in a local working copy, validates it, publishes it to
 a branch and pull request, previews it with Azure what-if, deploys it after you approve
-that exact change set, and verifies the result. The CI workflow is still to come. See
-[docs/milestones.md](docs/milestones.md).
+that exact change set (production only once the pull request is merged), and verifies the
+result. It can install a validation workflow in your repository. It has been tested
+against fakes and with one real deployment; read "Known limitations" for what has not
+been verified. See [docs/milestones.md](docs/milestones.md),
+[docs/security-model.md](docs/security-model.md) and
+[docs/recovery.md](docs/recovery.md).
 
 | Component | Type | Job |
 | --- | --- | --- |
@@ -21,7 +25,8 @@ that exact change set, and verifies the result. The CI workflow is still to come
 | `/iac-publish` | Skill (you invoke it) | Commit, push, confirm the remote, open a pull request |
 | `/iac-deploy` | Skill (you invoke it) | Azure context check, what-if, approval, deployment, verification |
 | `tools/deploy/cli.py` | CLI | `context`, `plan`, `deploy`, `status`, `verify`. Only `deploy` changes Azure |
-| `tools/github/cli.py` | CLI | Publish preview, publish, and re-verification against GitHub |
+| `tools/github/cli.py` | CLI | Publish preview, publish, re-verification against GitHub; validation workflow status and install |
+| `templates/iac-validate.yml` | Workflow template | The only CI the plugin installs: Bicep build and lint on pull requests, Checkov report |
 | `tools/workspace/cli.py` | CLI | Working copy: clone, sync, work branch, Bicep inventory, record changed files |
 | `tools/validate/cli.py` | CLI | Structure, Bicep build and lint, secret scan, Checkov security scan |
 | `tools/setup/cli.py` | CLI (Python 3, stdlib) | Setup status: config, required permission rules, installed tools |
@@ -29,7 +34,7 @@ that exact change set, and verifies the result. The CI workflow is still to come
 | `tools/discovery/cli.py` | CLI | Next questions for a request; proposal template and rendering |
 | `tools/config/cli.py` | CLI | Per-user, per-project configuration |
 | `tools/state/cli.py` | CLI | Workflow state machine and request records |
-| `hooks/azure_guard.py` | PreToolUse hook | Blocks direct Azure changes from the shell; limits writes to the infrastructure directory of the working copy; blocks git changes there and, for the agent, `gh` commands that write; asks you before approval and publish commands |
+| `hooks/azure_guard.py` | PreToolUse hook | Blocks direct Azure changes from the shell; limits writes to the infrastructure directory of the working copy; blocks git changes there and, for the agent, `gh` commands that write; asks you before approval, publish, workflow-install and deploy commands |
 
 ## What works today
 
@@ -101,9 +106,19 @@ that exact change set, and verifies the result. The CI workflow is still to come
 - **Failures explained.** Sign-in, authorization, policy, quota, SKU availability,
   template and conflict errors are told apart, each with what can be done. Only read
   operations are retried, and only for temporary errors.
-- **Accepted findings.** A scanner finding you decide to live with is recorded in the
-  project config with its reason (`accepted_findings.<check id>`). It is then reported as
-  accepted with that reason: a warning, never a pass.
+- **Accepted findings, one resource at a time.** A scanner finding you decide to live with
+  is recorded in the project config with its reason, for the resource it concerns
+  (`accepted_findings.<check id>@<file>:<resource>`; validation prints the key). It is
+  then reported as accepted with that reason: a warning, never a pass. The same finding
+  on another resource still fails.
+- **Merged first for production.** A production environment is deployed only when GitHub
+  reports the request's pull request as merged into the default branch at the published
+  commit. Other environments can be deployed from the branch.
+- **Validation workflow.** `github/cli.py install-workflow` adds
+  `.github/workflows/iac-validate.yml` from a fixed template, on its own branch, as a pull
+  request for you to review. It builds and lints the Bicep on pull requests (blocking) and
+  reports parameter-file and Checkov results (not blocking). No secrets, no Azure sign-in,
+  read-only permissions.
 - **Configuration** per project: GitHub repository (validated, normalised, switching needs
   explicit confirmation), default branch, infrastructure root, region, environment names,
   production environments, naming and tagging conventions, deployment authentication
@@ -120,9 +135,9 @@ that exact change set, and verifies the result. The CI workflow is still to come
   `az ad sp create-for-rbac`, mutating `az rest`, `New-AzResourceGroupDeployment` and
   similar are blocked; `az account show`, `what-if`, `validate`, `bicep build/lint` pass.
 
-Not yet: the GitHub Actions validation workflow for your infrastructure repository
-(Milestone 6). Removing a deployment is not automated: deleting is yours to do. The agent says so instead
-of pretending.
+Not available: removing or rolling back a deployment (deleting is yours to do), merging a
+pull request, direct commits without a pull request. The agent says so instead of
+pretending. When something fails or is interrupted, see [docs/recovery.md](docs/recovery.md).
 
 ## Install
 
@@ -161,6 +176,7 @@ plugin hook. Put this in `~/.claude/settings.json`, or in the project's
       "Bash(*tools/config/cli.py* clear *)",
       "Bash(*tools/config/cli.py* set accepted_findings.*)",
       "Bash(*tools/github/cli.py* publish *)",
+      "Bash(*tools/github/cli.py* install-workflow*)",
       "Bash(*tools/deploy/cli.py* deploy *)"
     ]
   }
@@ -169,13 +185,12 @@ plugin hook. Put this in `~/.claude/settings.json`, or in the project's
 
 `tools/setup/cli.py status` checks them. **Until they are present the tools refuse to
 publish, to record a deployment approval and to deploy.** If you added rules for an
-earlier version, add the ones you are missing; there are seven. An `allow` rule that matches these commands (for example
+earlier version, add the ones you are missing; there are eight (0.6.0 added `install-workflow`). An `allow` rule that matches these commands (for example
 `Bash(python3 *)`) counts as a conflict and is refused too. Do not use `bypassPermissions`
 mode with this plugin.
 
 **The shell guard applies to every session where the plugin is enabled**, not only when
-the agent is running: direct Azure changes from Bash are blocked while it is installed. Publishing tests push to a local bare repository and use a fake `gh` that
-keeps pull requests in a file.
+the agent is running: direct Azure changes from Bash are blocked while it is installed.
 Disable the plugin (`/plugin`) if you need to run such commands yourself.
 
 ## Usage
@@ -205,6 +220,8 @@ python3 <plugin>/tools/deploy/cli.py context
 python3 <plugin>/tools/deploy/cli.py status <id>
 python3 <plugin>/tools/github/cli.py preview <id>
 python3 <plugin>/tools/github/cli.py verify <id>
+python3 <plugin>/tools/github/cli.py workflow-status
+python3 <plugin>/tools/github/cli.py install-workflow   # opens a pull request; prompts you
 python3 <plugin>/tools/config/cli.py show
 python3 <plugin>/tools/config/cli.py set-repo my-org/platform-infra --default-branch main
 python3 <plugin>/tools/config/cli.py set environments dev,test,prod
@@ -265,7 +282,9 @@ Details: [docs/security-model.md](docs/security-model.md).
 | Secrets in code | Secret scan over every file under the infrastructure directory; values never echoed | Tool code (pattern-based) |
 | Insecure configuration | Bicep linter security rules and Checkov; suppressions are reported as warnings, never as passes | Tool code |
 | Commit or push outside the workflow | git changes in the working copy are blocked for every session; for the agent, everywhere | Hook (command text only) |
-| A finding silently ignored | Accepting one needs a reason, prompts you, and shows as a warning with the reason in every later run | Tool code, `ask` rule, hook |
+| A finding silently ignored | Accepting one needs a reason, covers one resource, prompts you, and shows as a warning with the reason in every later run | Tool code, `ask` rule, hook |
+| Production running unmerged code | Deploy reads the pull request from GitHub and refuses unless it is merged at the published commit | Tool code |
+| CI written by the model | The workflow is a fixed template installed by a tool, as a pull request; the model cannot write under `.github/` | Tool code, hook, `ask` rule |
 | Direct Azure changes from the shell | Allowlist of read-only `az`, Azure PowerShell and `bicep` commands | Hook (command text only) |
 | Secrets stored | Secret guard on every write | Tool code (pattern-based) |
 | Records edited directly | Store paths blocked for Bash/Write/Edit; hashes re-checked | Hook and tool code |
@@ -305,65 +324,102 @@ ignores directory permissions.
 
 ## Known limitations
 
+Not verified:
+
+- The hook, the skills and the `ask` rules have not been exercised in a live Claude Code
+  session with the plugin installed. That includes whether Claude Code prompts on the
+  rules in every permission mode, and the `agent_type` field the hook uses to recognise
+  the agent.
+- The validation workflow has not run on GitHub Actions. Its shell steps were run locally
+  with the real Bicep CLI and Checkov. The installer and the merged-first rule are tested
+  against a local bare repository and a fake `gh`, not GitHub itself.
+- One real deployment was done: a small VM at subscription scope (2026-10-05). Failure,
+  partial, interrupted and high-risk paths, and resource-group scope, are tested against a
+  fake `az` only.
+- There are no evals of the Bicep the model writes.
+
+Approval and safety:
+
 - The approval gate cannot prove a human approved: the model runs the CLIs. Claude Code's
-  permission prompt is the human check. The tools verify that your `ask` rules exist by
-  matching their text against sample commands; that Claude Code prompts on them in every
-  permission mode has not been tested in a live session.
+  permission prompt is the human check, for approvals, publishing and deployment.
+- The hook matches command text. Indirection (variables, `eval`, scripts, SDKs) is not seen.
+  It also blocks harmless text that mentions a blocked command.
+- Write limits cover the Write and Edit tools. A file written by a shell command is not
+  blocked at the time; it is caught when changed files are recorded, which refuses
+  anything outside the infrastructure directory.
+- The secret guard is pattern-based; unrecognisable secrets pass.
+- Merged first proves the pull request was merged, not that someone else reviewed it.
+  Required reviews, branch protection and making the workflow a required check are yours
+  to configure; the agent neither reads nor changes them. Non-production environments
+  deploy from the branch, unmerged.
+
+Discovery and design:
+
 - The question catalog is a starting point, not complete Azure knowledge. The agent adds
   questions of its own; those are not enforced by the tools unless marked must-confirm.
-- Discovery cannot look at Azure yet (Milestone 5), so "what already exists" comes from you
-  and is recorded as your statement or as an unverified assumption.
+- "What already exists" in Azure is whatever the agent reads with read-only `az` commands
+  or you tell it; it is not checked systematically.
 - Cost figures in a proposal are the model's estimate from stated assumptions, or an
   explanation of why no estimate is possible. No pricing API is called.
+- Region names are checked for shape only, not against the live Azure region list.
+
+Repository and publishing:
+
 - Repository inspection lists file names only. A very large repository is reported as
   truncated. GitHub answers "not found" both for a missing repository and for one your
   login cannot see.
-- The approval gate cannot prove a human approved, as before; for deployment the
-  permission prompt on the deploy command is the human check.
+- Publishing always opens a pull request. Direct commits to a branch are not supported.
+- A commit is made with your git identity. No co-author line is added.
+- After a pull request is merged and its branch deleted, `verify` reports the branch as
+  gone; that is expected.
+- The documentation for a deployment lives under the infrastructure directory
+  (`<infra_root>/README.md`). The repository's root README and `docs/` are outside the
+  write limit, so the agent does not update them.
+- GitHub.com only; GitHub Enterprise Server is not supported.
+
+Validation:
+
+- The Bicep inventory is a line scan for declarations, not a parser. `bicep build` is the
+  authority.
+- Checkov is the only security scanner, and it runs without a platform key, so its
+  findings carry no severity: every finding fails the check until it is fixed or accepted.
+- An acceptance covers one resource as Checkov names it. A module used for several
+  environments is one resource, so an acceptance on it covers all of them. Acceptances
+  made before 0.6.0 (a bare check ID) are no longer applied; accept per resource and
+  unset the old entry.
+- In the workflow, parameter files and Checkov findings are report only: the runner has
+  neither your environment variables nor your accepted findings. Bicep build and lint block.
+- API versions are checked by the Bicep linter (`use-recent-api-versions`) when the
+  recommended `bicepconfig.json` is in place; nothing is checked against live Azure.
+- Validation proves the files compile and pass static checks. Azure-side validation and
+  what-if run when a deployment is planned; neither proves a deployment will succeed.
+
+Deployment:
+
 - What-if is Azure's prediction. It can miss changes (for example resources Azure creates
   implicitly, such as a VM's disk) and it does not predict failures such as capacity.
 - Risk flags are derived by rules over the what-if result. They catch the listed cases;
   an unusual exposure or privilege change may not be flagged. Read the change set.
-- Code is deployed from the request's published branch. It does not have to be merged
-  first (see docs/decisions.md ADR-031).
 - There is no rollback and no removal of resources. Cleaning up is a deletion you perform.
 - Subscription-scope and resource-group deployments are supported; management-group and
   tenant scope are not.
-- Tested against the real services once: one subscription-scope deployment of a small VM
-  (2026-10-05). Everything else is tested against a fake `az`.
-- Publishing always opens a pull request. Direct commits to a development branch are not
-  supported.
-- Branch protection, required reviews and CI on your repository are yours to configure;
-  the agent neither reads nor changes them. If protection rejects the push, that is
-  reported.
-- A commit is made with your git identity. No co-author line is added.
-- After a pull request is merged and its branch deleted, `verify` reports the branch as
-  gone; that is expected.
-- Write limits cover the Write and Edit tools. A file written by a shell command is not
-  blocked at the time; it is caught when changed files are recorded, which refuses
-  anything outside the infrastructure directory.
-- The documentation for a deployment lives under the infrastructure directory
-  (`<infra_root>/README.md`). The repository's root README and `docs/` are outside the
-  write limit, so the agent does not update them.
-- The Bicep inventory is a line scan for declarations, not a parser. `bicep build` is the
-  authority.
-- Checkov runs without a platform key, so its findings carry no severity; every finding
-  fails the check until it is fixed or you agree to suppress it.
-- API versions are checked by the Bicep linter (`use-recent-api-versions`) when the
-  recommended `bicepconfig.json` is in place; nothing is checked against live Azure yet.
-- Validation proves the files compile and pass static checks. It does not prove a
-  deployment will succeed: Azure-side validation and what-if are Milestone 5.
+
+Storage:
+
+- No file locking. A second writer to the same request is refused when the file changed
+  under it (exit code 3) and must retry.
+- Project identity is the directory path.
 - Records created by 0.1.0 have no profile; an architecture approval made with 0.1.0 is
   invalid under 0.2.0 and must be given again.
-- The hook matches command text. Indirection (variables, `eval`, scripts, SDKs) is not seen.
-  It also blocks harmless text that mentions a blocked command.
-- The secret guard is pattern-based; unrecognisable secrets pass.
-- GitHub.com only; GitHub Enterprise Server is not supported.
-- Region names are checked for shape only, not against the live Azure region list.
-- No file locking; two simultaneous writers to one request can race.
-- Project identity is the directory path.
 
 ## Changelog
+
+- `0.6.0` - Milestone 6: `github/cli.py install-workflow` and `workflow-status` with the
+  fixed template `templates/iac-validate.yml`; production deploys only from a merged pull
+  request; scanner findings accepted per resource (acceptances by bare check ID are no
+  longer applied: accept per resource, then unset the old entry); one more required
+  permission rule (`install-workflow`); `docs/recovery.md`; residual risks in the security
+  model; a mocked end-to-end test of the production path.
 
 - `0.5.0` - Milestone 5: `/iac-deploy` and `tools/deploy/cli.py` (context, plan, deploy,
   status, verify); risk flags from what-if; classified Azure failures; one more required

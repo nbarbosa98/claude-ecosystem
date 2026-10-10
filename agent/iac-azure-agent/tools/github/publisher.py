@@ -20,6 +20,7 @@ import json
 import re
 import subprocess
 
+from config import schema
 from lib import secret_guard
 from lib.errors import ExternalUnavailable, InvalidInput, Refused
 from state import machine
@@ -121,9 +122,10 @@ def pr_body(rec, facts, extra=None, accepted_findings=None):
     if facts["accepted_incomplete"]:
         lines += ["", "Accepted by the user as not run: %s. These are not passes."
                   % ", ".join(sorted(set(facts["accepted_incomplete"])))]
-    if accepted_findings:
-        lines += ["", "Security findings accepted for this project (reported as warnings, not passes):", ""]
-        lines += ["- `%s`: %s" % (k, " ".join(str(v).split())) for k, v in sorted(accepted_findings.items())]
+    scoped = {k: v for k, v in (accepted_findings or {}).items() if schema.is_scoped_finding(k)}
+    if scoped:
+        lines += ["", "Security findings accepted for one resource each (reported as warnings, not passes):", ""]
+        lines += ["- `%s`: %s" % (k, " ".join(str(v).split())) for k, v in sorted(scoped.items())]
     lines += ["", "Not run: Azure deployment validation and what-if. Nothing has been deployed.",
               "", "## Confirmed requirements", ""]
     lines += ["- %s" % " ".join(r["text"].split()) for r in rec["requirements"]] or ["- none"]
@@ -172,6 +174,11 @@ class Publisher:
         code, _, err = ws._git("push", "--quiet", "origin", "refs/heads/%s:refs/heads/%s" % (branch, branch))
         if code != 0:
             low = err.lower()
+            if "workflow" in low and "scope" in low:
+                raise Refused("GitHub refused the push: the git credential may not change files "
+                              "under .github/workflows (it lacks the `workflow` scope). Run "
+                              "`gh auth refresh -s workflow` yourself, then run this again. "
+                              "Nothing was pushed.")
             if "non-fast-forward" in low or "fetch first" in low or "rejected" in low:
                 raise Refused("GitHub rejected the push: the remote branch %s has commits this "
                               "working copy does not have. Nothing was forced. Someone else "
@@ -212,3 +219,27 @@ class Publisher:
             raise ExternalUnavailable("gh reported a pull request but none is open for %s; "
                                       "do not treat it as created" % branch)
         return created, True
+
+
+def merge_state(ws, rec, run_gh=gh):
+    """Reads from GitHub whether the request's pull request was merged, and whether what
+    was merged is the commit this request published. Read-only."""
+    g = rec.get("git") or {}
+    if not g.get("commit") or not g.get("pr_url"):
+        raise Refused("no pull request is recorded for this request (github/cli.py publish)")
+    number = g["pr_url"].rsplit("/", 1)[-1]
+    code, text, err = run_gh(["pr", "view", number, "--repo", ws.repo["slug"], "--json",
+                              "url,state,headRefOid,mergedAt,baseRefName"])
+    if code != 0:
+        raise ExternalUnavailable("could not read the pull request from GitHub: %s. Whether it "
+                                  "is merged is unknown." % " ".join(err.split())[:200])
+    try:
+        pr = json.loads(text)
+    except ValueError:
+        raise ExternalUnavailable("gh returned unreadable output for the pull request; whether "
+                                  "it is merged is unknown")
+    return {"url": g["pr_url"], "state": pr.get("state"), "merged_at": pr.get("mergedAt"),
+            "base": pr.get("baseRefName"), "head": pr.get("headRefOid"),
+            "merged": pr.get("state") == "MERGED" and bool(pr.get("mergedAt")),
+            "head_is_published_commit": pr.get("headRefOid") == g["commit"],
+            "base_is_default": pr.get("baseRefName") == ws.default_branch}

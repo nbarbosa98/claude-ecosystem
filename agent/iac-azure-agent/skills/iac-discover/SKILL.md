@@ -41,7 +41,7 @@ Repeat until `D next ID` returns no `ask`:
 4. `must_confirm` topics (subscription, address ranges, production sizing, public exposure, what may be deleted) take only the user's own answer. The tools refuse to record them as assumptions. If the user cannot answer, the request waits there.
 5. For `suggested_assumptions`, do not ask: record each as an assumption with its topic. They are reviewed in round 4.
 
-Inspecting Azure for existing resources is not available before Milestone 5. If an answer depends on what exists in Azure, ask the user and record their answer as a requirement, or record an assumption and say it is unverified.
+If an answer depends on what already exists in Azure, you may check it with a read-only `az` command (`az network vnet list`, `az resource list`, `az vm list-skus`) when `az` is signed in to the subscription the user named; say what you checked. Otherwise ask the user and record their answer as a requirement, or record an assumption and say it is unverified.
 
 ## Round 4 - assumptions and trade-offs
 
@@ -54,7 +54,7 @@ Inspecting Azure for existing resources is not available before Milestone 5. If 
 
 1. Run `D template`. Fill every required section from the confirmed requirements and the reviewed assumptions: objective, scope, resources (name, type, purpose), overview, dependencies, naming_tagging_region, identity_access, network_security, monitoring, cost (an estimate with its basis, or the limitations that prevent one), repository_changes, deployment_strategy, risks, unresolved. Add `diagram` (Mermaid) only when it helps.
    - Cost: never invent a price. Without a reliable source, state the cost drivers under `limitations`.
-   - `repository_changes` and `deployment_strategy` describe the plan; say that writing Bicep, publishing and deploying arrive with Milestones 3 to 5.
+   - `repository_changes` and `deployment_strategy` describe the plan. For a production environment, say that the pull request must be merged before it can be deployed.
 2. `S set-architecture ID --file <path>` or `--json '...'`, then `S advance ID --to APPROVAL`. A refusal lists the missing sections.
 3. Run `D proposal ID` and show its `markdown` to the user unchanged, including the approval hash. It keeps what the user confirmed apart from what is assumed.
 4. Ask for approval of that hash. Follow the agent's approval rules: record it (`S approve ID --kind architecture --confirm <hash>`) only on the user's explicit approval of this proposal. Claude Code asks them to allow the command.
@@ -64,4 +64,4 @@ Inspecting Azure for existing resources is not available before Milestone 5. If 
 
 - One batch at a time. Never send the whole catalog as a questionnaire.
 - Never record something the user did not say as a requirement.
-- Stop after architecture approval: implementation is Milestone 3.
+- Stop after architecture approval. Implementation is `/iac-implement`.
